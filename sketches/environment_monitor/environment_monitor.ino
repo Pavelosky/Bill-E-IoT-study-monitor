@@ -1,19 +1,26 @@
-// ESP8266-2 Environment Monitor - KY modules
+// ESP8266-2 Environment Monitor with Mesh Network
 #include <DHT.h>
 #include <LiquidCrystal_I2C.h>
 #include <Wire.h>
+#include "painlessMesh.h"
+#include <ArduinoJson.h>
+
+// Mesh network config
+#define MESH_PREFIX     "BillE_Focus_Mesh"
+#define MESH_PASSWORD   "FocusBot2025"
+#define MESH_PORT       5555
 
 // Pin definitions
 #define DHT_PIN         D6
 #define DHT_TYPE        DHT11
-#define ANALOG_PIN      A0      // Shared between KY-018 and KY-038
-#define LIGHT_SELECT    D3      // Control pin to select light sensor
-#define MIC_SELECT      D4      // Control pin to select microphone
-#define SOUND_DIGITAL   D5      // KY-038 digital output (optional)
+#define ANALOG_PIN      A0
+#define SOUND_DIGITAL   D5
 
 // Objects
 DHT dht(DHT_PIN, DHT_TYPE);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
+painlessMesh mesh;
+Scheduler userScheduler;
 
 // Environmental data structure
 struct EnvironmentData {
@@ -21,53 +28,65 @@ struct EnvironmentData {
   float humidity;
   int lightLevel;
   int noiseLevel;
-  bool soundDetected;  // From KY-038 digital output
+  bool soundDetected;
   unsigned long timestamp;
 };
 
 EnvironmentData currentEnv;
 
+// Function prototypes
+void sendEnvironmentalData();
+Task taskSendData(TASK_SECOND * 10, TASK_FOREVER, &sendEnvironmentalData);
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("Environment Monitor Starting...");
+  Serial.println("Environment Monitor with Mesh Starting...");
   
-  // Initialize pins for analog multiplexing (if needed)
-  pinMode(LIGHT_SELECT, OUTPUT);
-  pinMode(MIC_SELECT, OUTPUT);
+  // Initialize pins
   pinMode(SOUND_DIGITAL, INPUT);
   
   // Initialize DHT sensor
   dht.begin();
   
   // Initialize I2C for LCD
-  Wire.begin(D1, D2); // SDA=D1, SCL=D2
+  Wire.begin(D1, D2);
   lcd.init();
   lcd.backlight();
+  
+  // Initialize mesh network
+  mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
+  mesh.init(MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT);
+  mesh.onReceive(&receivedCallback);
+  mesh.onNewConnection(&newConnectionCallback);
+  mesh.onChangedConnections(&changedConnectionCallback);
+  
+  // Add task to send data every 10 seconds
+  userScheduler.addTask(taskSendData);
+  taskSendData.enable();
   
   // Welcome message
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Environment");
+  lcd.print("Env Monitor");
   lcd.setCursor(0, 1);
-  lcd.print("Monitor Ready");
+  lcd.print("Mesh Ready");
   
-  Serial.println("Environment Monitor Ready!");
-  Serial.println("Reading from KY-018 (light) and KY-038 (mic)");
-  delay(2000);
+  Serial.println("Environment Monitor with Mesh Ready!");
+  Serial.printf("Node ID: %u\n", mesh.getNodeId());
 }
 
 void loop() {
-  // Read all environmental sensors
-  readEnvironment();
+  mesh.update();
   
-  // Display data locally
-  displayEnvironment();
-  
-  // Print to Serial for debugging
-  printEnvironment();
-  
-  delay(5000); // Read every 5 seconds
+  // Read sensors every 5 seconds
+  static unsigned long lastRead = 0;
+  if (millis() - lastRead > 5000) {
+    readEnvironment();
+    displayEnvironment();
+    printEnvironment();
+    lastRead = millis();
+  }
 }
 
 void readEnvironment() {
@@ -96,45 +115,46 @@ void readEnvironment() {
 }
 
 int readKY018Light() {
-  // Read from KY-018 photoresistor module
-  // The module outputs higher voltage in bright light
   int rawValue = analogRead(ANALOG_PIN);
-  
-  // KY-018 typically outputs:
-  // Bright light: ~1000-1024
-  // Dark: ~0-100
-  // Convert to lux approximation (0-1000 range)
   int lux = map(rawValue, 0, 1024, 0, 1000);
-  
-  Serial.printf("KY-018 raw: %d, mapped: %d lux\n", rawValue, lux);
   return lux;
 }
 
 int readKY038Noise() {
-  // Read from KY-038 microphone module
-  // Sample for a short period to get peak-to-peak amplitude
   int maxSound = 0;
   int minSound = 1024;
-  int sampleCount = 100;
   
-  for (int i = 0; i < sampleCount; i++) {
+  for (int i = 0; i < 100; i++) {
     int soundLevel = analogRead(ANALOG_PIN);
-    
     if (soundLevel > maxSound) maxSound = soundLevel;
     if (soundLevel < minSound) minSound = soundLevel;
-    
-    delayMicroseconds(100); // Quick sampling
+    delayMicroseconds(100);
   }
   
-  // Return peak-to-peak amplitude
-  int amplitude = maxSound - minSound;
+  return maxSound - minSound;
+}
+
+void sendEnvironmentalData() {
+  // Create JSON message with environmental data
+  StaticJsonDocument<300> doc;
+  doc["type"] = "ENVIRONMENTAL_DATA";
+  doc["nodeType"] = "ENVIRONMENT";
+  doc["nodeId"] = mesh.getNodeId();
+  doc["timestamp"] = currentEnv.timestamp;
+  doc["temperature"] = currentEnv.temperature;
+  doc["humidity"] = currentEnv.humidity;
+  doc["lightLevel"] = currentEnv.lightLevel;
+  doc["noiseLevel"] = currentEnv.noiseLevel;
+  doc["soundDetected"] = currentEnv.soundDetected;
   
-  Serial.printf("KY-038 min: %d, max: %d, amplitude: %d\n", minSound, maxSound, amplitude);
-  return amplitude;
+  String message;
+  serializeJson(doc, message);
+  
+  mesh.sendBroadcast(message);
+  Serial.println("Environmental data sent to mesh: " + message);
 }
 
 void displayEnvironment() {
-  // Cycle through different displays every 3 seconds
   static unsigned long lastDisplay = 0;
   static int displayMode = 0;
   
@@ -143,14 +163,12 @@ void displayEnvironment() {
     
     switch (displayMode) {
       case 0:
-        // Temperature and Humidity
         lcd.setCursor(0, 0);
         if (currentEnv.temperature != -999) {
           lcd.printf("Temp: %.1fC", currentEnv.temperature);
         } else {
           lcd.print("Temp: Error");
         }
-        
         lcd.setCursor(0, 1);
         if (currentEnv.humidity != -999) {
           lcd.printf("Hum: %.0f%%", currentEnv.humidity);
@@ -160,7 +178,6 @@ void displayEnvironment() {
         break;
         
       case 1:
-        // Light and Noise
         lcd.setCursor(0, 0);
         lcd.printf("Light: %d", currentEnv.lightLevel);
         lcd.setCursor(0, 1);
@@ -168,11 +185,10 @@ void displayEnvironment() {
         break;
         
       case 2:
-        // Sound detection status
         lcd.setCursor(0, 0);
-        lcd.print("Sound Detect:");
+        lcd.printf("Mesh: %d nodes", mesh.getNodeList().size());
         lcd.setCursor(0, 1);
-        lcd.print(currentEnv.soundDetected ? "YES" : "NO");
+        lcd.printf("ID: %u", mesh.getNodeId());
         break;
     }
     
@@ -188,6 +204,39 @@ void printEnvironment() {
   Serial.printf("Light Level: %d lux\n", currentEnv.lightLevel);
   Serial.printf("Noise Level: %d\n", currentEnv.noiseLevel);
   Serial.printf("Sound Detected: %s\n", currentEnv.soundDetected ? "YES" : "NO");
-  Serial.printf("Timestamp: %lu\n", currentEnv.timestamp);
+  Serial.printf("Mesh Nodes: %d\n", mesh.getNodeList().size());
   Serial.println("==========================");
+}
+
+// Mesh callbacks
+void receivedCallback(uint32_t from, String &msg) {
+  Serial.printf("Received from %u: %s\n", from, msg.c_str());
+  
+  // Parse message and respond if needed
+  StaticJsonDocument<200> doc;
+  deserializeJson(doc, msg);
+  
+  String msgType = doc["type"];
+  if (msgType == "REQUEST_ENV_DATA") {
+    // Send immediate environmental data
+    sendEnvironmentalData();
+  }
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+  Serial.printf("New Connection: %u\n", nodeId);
+  
+  // Send identification message
+  StaticJsonDocument<100> doc;
+  doc["type"] = "NODE_IDENTIFICATION";
+  doc["nodeType"] = "ENVIRONMENT";
+  doc["capabilities"] = "temperature,humidity,light,noise";
+  
+  String message;
+  serializeJson(doc, message);
+  mesh.sendSingle(nodeId, message);
+}
+
+void changedConnectionCallback() {
+  Serial.printf("Changed connections. Nodes: %d\n", mesh.getNodeList().size());
 }
