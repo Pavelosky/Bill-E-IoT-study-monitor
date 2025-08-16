@@ -1,4 +1,4 @@
-// ESP8266-1 Main Brain with Mesh Network
+// ESP8266-1 Main Brain with Mesh Network - FIXED
 #include <MFRC522.h>
 #include <LiquidCrystal_I2C.h>
 #include <SPI.h>
@@ -40,13 +40,27 @@ struct EnvironmentData {
 
 EnvironmentData envData;
 
+// Biometric data from wearable
+struct BiometricData {
+  int heartRate = 0;
+  String activity = "";
+  int stepCount = 0;
+  float acceleration = 0;
+  unsigned long lastMovement = 0;
+  unsigned long lastUpdate = 0;
+  bool dataAvailable = false;
+};
+
+BiometricData bioData;
+
 // Connected nodes
 uint32_t environmentNodeId = 0;
+uint32_t wearableNodeId = 0;
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("Wall-E Main Brain with Mesh Starting...");
+  Serial.println("Bill-E Main Brain with Mesh Starting...");
   
   // Initialize pins
   pinMode(LED_PIN, OUTPUT);
@@ -58,6 +72,13 @@ void setup() {
   // Initialize LCD
   lcd.init();
   lcd.backlight();
+
+    // Reset RFID properly
+  pinMode(RST_PIN, OUTPUT);
+  digitalWrite(RST_PIN, LOW);
+  delay(100);
+  digitalWrite(RST_PIN, HIGH);
+  delay(100);
   
   // Initialize SPI and RFID
   SPI.begin();
@@ -83,17 +104,15 @@ void setup() {
 
 void loop() {
   mesh.update();
-  
   handleRFID();
   updateDisplay();
-  
   delay(100);
 }
 
 void showWelcomeScreen() {
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Wall-E Focus Bot");
+  lcd.print("Bill-E Focus Bot");
   lcd.setCursor(0, 1);
   lcd.print("Scan RFID card");
 }
@@ -127,17 +146,40 @@ void startSession(String userId) {
   
   digitalWrite(LED_PIN, HIGH);
   
-  // Request environmental data immediately
+  // Notify all nodes about session start
+  StaticJsonDocument<150> sessionMsg;
+  sessionMsg["type"] = "SESSION_START";
+  sessionMsg["userId"] = userId;
+  sessionMsg["timestamp"] = millis();
+  
+  String message;
+  serializeJson(sessionMsg, message);
+  mesh.sendBroadcast(message);
+  
+  // Request fresh data from all nodes
   requestEnvironmentalData();
+  requestBiometricData();
   
   Serial.println("Session started for: " + userId);
 }
 
 void endSession() {
   sessionActive = false;
+  String lastUser = currentUser;
   currentUser = "";
   
   digitalWrite(LED_PIN, LOW);
+  
+  // Notify all nodes about session end
+  StaticJsonDocument<150> sessionMsg;
+  sessionMsg["type"] = "SESSION_END";
+  sessionMsg["userId"] = lastUser;
+  sessionMsg["timestamp"] = millis();
+  
+  String message;
+  serializeJson(sessionMsg, message);
+  mesh.sendBroadcast(message);
+  
   showWelcomeScreen();
   
   Serial.println("Session ended");
@@ -145,34 +187,60 @@ void endSession() {
 
 void updateDisplay() {
   if (sessionActive) {
-    // Show session info with environmental data
+    // Show session info with environmental and biometric data
     unsigned long elapsed = (millis() - sessionStart) / 1000;
     int minutes = elapsed / 60;
     int seconds = elapsed % 60;
     
     static unsigned long lastDisplaySwitch = 0;
-    static bool showEnvData = false;
+    static int displayMode = 0;
     
-    // Switch between session info and environmental data every 3 seconds
+    // Switch between different data views every 3 seconds
     if (millis() - lastDisplaySwitch > 3000) {
-      showEnvData = !showEnvData;
+      displayMode = (displayMode + 1) % 3;
       lastDisplaySwitch = millis();
     }
     
     lcd.clear();
     
-    if (showEnvData && envData.dataAvailable) {
-      // Show environmental data
-      lcd.setCursor(0, 0);
-      lcd.printf("T:%.1fC H:%.0f%%", envData.temperature, envData.humidity);
-      lcd.setCursor(0, 1);
-      lcd.printf("L:%d N:%d", envData.lightLevel, envData.noiseLevel);
-    } else {
-      // Show session info
-      lcd.setCursor(0, 0);
-      lcd.print("Session Active");
-      lcd.setCursor(0, 1);
-      lcd.printf("Time: %02d:%02d", minutes, seconds);
+    switch (displayMode) {
+      case 0:
+        // Session info
+        lcd.setCursor(0, 0);
+        lcd.print("Session Active");
+        lcd.setCursor(0, 1);
+        lcd.printf("Time: %02d:%02d", minutes, seconds);
+        break;
+        
+      case 1:
+        // Environmental data
+        if (envData.dataAvailable) {
+          lcd.setCursor(0, 0);
+          lcd.printf("T:%.1fC H:%.0f%%", envData.temperature, envData.humidity);
+          lcd.setCursor(0, 1);
+          lcd.printf("L:%d N:%d", envData.lightLevel, envData.noiseLevel);
+        } else {
+          lcd.setCursor(0, 0);
+          lcd.print("Environment");
+          lcd.setCursor(0, 1);
+          lcd.print("No Data");
+        }
+        break;
+        
+      case 2:
+        // Biometric data
+        if (bioData.dataAvailable) {
+          lcd.setCursor(0, 0);
+          lcd.printf("HR:%d Steps:%d", bioData.heartRate, bioData.stepCount);
+          lcd.setCursor(0, 1);
+          lcd.print("Act: " + bioData.activity.substring(0, 10));
+        } else {
+          lcd.setCursor(0, 0);
+          lcd.print("Biometric");
+          lcd.setCursor(0, 1);
+          lcd.print("No Data");
+        }
+        break;
     }
   }
 }
@@ -188,6 +256,20 @@ void requestEnvironmentalData() {
     
     mesh.sendSingle(environmentNodeId, message);
     Serial.println("Requested environmental data");
+  }
+}
+
+void requestBiometricData() {
+  if (wearableNodeId != 0) {
+    StaticJsonDocument<100> doc;
+    doc["type"] = "REQUEST_BIO_DATA";
+    doc["from"] = mesh.getNodeId();
+    
+    String message;
+    serializeJson(doc, message);
+    
+    mesh.sendSingle(wearableNodeId, message);
+    Serial.println("Requested biometric data");
   }
 }
 
@@ -215,11 +297,29 @@ void receivedCallback(uint32_t from, String &msg) {
     // Analyze environment and provide feedback
     analyzeEnvironment();
     
+  } else if (msgType == "BIOMETRIC_DATA") {
+    // Update biometric data
+    bioData.heartRate = doc["heartRate"];
+    bioData.activity = doc["activity"].as<String>();  // Fix: explicit conversion
+    bioData.stepCount = doc["stepCount"];
+    bioData.acceleration = doc["acceleration"];
+    bioData.lastMovement = doc["lastMovement"];
+    bioData.lastUpdate = millis();
+    bioData.dataAvailable = true;
+    
+    Serial.println("Biometric data updated");
+    
+    // Analyze biometric data
+    analyzeBiometrics();
+    
   } else if (msgType == "NODE_IDENTIFICATION") {
     String nodeType = doc["nodeType"];
     if (nodeType == "ENVIRONMENT") {
       environmentNodeId = from;
       Serial.printf("Environment node identified: %u\n", from);
+    } else if (nodeType == "WEARABLE") {
+      wearableNodeId = from;
+      Serial.printf("Wearable node identified: %u\n", from);
     }
   }
 }
@@ -268,5 +368,28 @@ void analyzeEnvironment() {
     }
     
     Serial.println("Environment Alert: " + alertMsg);
+  }
+}
+
+void analyzeBiometrics() {
+  if (!bioData.dataAvailable) return;
+  
+  // Check for extended sitting
+  unsigned long timeSinceMovement = millis() - bioData.lastMovement;
+  
+  if (timeSinceMovement > 25 * 60 * 1000 && sessionActive) { // 25 minutes
+    // Flash LED for movement reminder
+    for (int i = 0; i < 5; i++) {
+      digitalWrite(LED_PIN, LOW);
+      delay(100);
+      digitalWrite(LED_PIN, HIGH);
+      delay(100);
+    }
+    Serial.println("Biometric Alert: Time to move!");
+  }
+  
+  // Check heart rate
+  if (bioData.heartRate > 100 && sessionActive) {
+    Serial.println("Biometric Alert: High heart rate - take a break");
   }
 }

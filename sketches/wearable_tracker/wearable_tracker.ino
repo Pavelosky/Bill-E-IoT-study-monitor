@@ -1,7 +1,15 @@
-// ESP8266-3 Wearable Tracker - Fixed MPU6050
+// ESP8266-3 Wearable Tracker with Mesh Network
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <MPU6050.h>
+#include "painlessMesh.h"
+#include <ArduinoJson.h>
+
+// Mesh network config
+// Mesh network config
+#define MESH_PREFIX     "BillE_Focus_Mesh"
+#define MESH_PASSWORD   "FocusBot2025"
+#define MESH_PORT       5555
 
 // Pin definitions
 #define OLED_SDA        D2
@@ -12,6 +20,8 @@
 // Objects
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C display(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 MPU6050 mpu;
+painlessMesh mesh;
+Scheduler userScheduler;
 
 // Biometric data structure
 struct BiometricData {
@@ -30,10 +40,18 @@ float lastAccelMagnitude = 0;
 int stepCount = 0;
 unsigned long lastStepTime = 0;
 
+// Session state
+bool sessionActive = false;
+String currentUser = "";
+
+// Function prototypes
+void sendBiometricData();
+Task taskSendData(TASK_SECOND * 5, TASK_FOREVER, &sendBiometricData);
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("Bill-E Wearable Tracker Starting...");
+  Serial.println("Bill-E Wearable Tracker with Mesh Starting...");
   
   // Initialize pins
   pinMode(HEART_LED, OUTPUT);
@@ -59,24 +77,37 @@ void setup() {
     while (1) delay(10);
   }
   
+  // Initialize mesh network
+  mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
+  mesh.init(MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT);
+  mesh.onReceive(&receivedCallback);
+  mesh.onNewConnection(&newConnectionCallback);
+  mesh.onChangedConnections(&changedConnectionCallback);
+  
+  // Add task to send data every 5 seconds
+  userScheduler.addTask(taskSendData);
+  taskSendData.enable();
+  
   // Welcome screen
   showWelcomeScreen();
   
-  Serial.println("Wearable Tracker Ready!");
+  Serial.println("Wearable Tracker with Mesh Ready!");
+  Serial.printf("Node ID: %u\n", mesh.getNodeId());
   delay(2000);
 }
 
 void loop() {
-  // Read all sensors
-  readBiometrics();
+  mesh.update();
+  
+  // Read sensors every second
+  static unsigned long lastRead = 0;
+  if (millis() - lastRead > 1000) {
+    readBiometrics();
+    lastRead = millis();
+  }
   
   // Update display
   updateDisplay();
-  
-  // Print debug info
-  printBiometrics();
-  
-  delay(1000); // Update every second
 }
 
 void readBiometrics() {
@@ -97,7 +128,6 @@ void readBiometrics() {
 }
 
 int readHeartRate() {
-  // KY-036 heart rate sensor reading
   static unsigned long lastBeat = 0;
   static int beatCount = 0;
   static unsigned long measureStart = 0;
@@ -111,10 +141,9 @@ int readHeartRate() {
   static bool beatDetected = false;
   
   if (sensorValue > 600 && lastValue < 600 && !beatDetected) {
-    // Potential heartbeat detected
     unsigned long now = millis();
     
-    if (now - lastBeat > 300) { // Minimum 300ms between beats (200 BPM max)
+    if (now - lastBeat > 300) { // Minimum 300ms between beats
       beatDetected = true;
       lastBeat = now;
       beatCount++;
@@ -126,11 +155,10 @@ int readHeartRate() {
       if (measureStart == 0) measureStart = now;
       
       if (now - measureStart >= 15000) { // 15 seconds
-        int bpm = (beatCount * 60) / 15; // Convert to BPM
+        int bpm = (beatCount * 60) / 15;
         beatCount = 0;
         measureStart = now;
         
-        // Return reasonable BPM (40-200 range)
         if (bpm >= 40 && bpm <= 200) {
           lastValidBPM = bpm;
           return bpm;
@@ -145,8 +173,6 @@ int readHeartRate() {
   }
   
   lastValue = sensorValue;
-  
-  // Return last valid reading
   return lastValidBPM;
 }
 
@@ -155,14 +181,13 @@ void readActivityData() {
   int16_t ax, ay, az;
   mpu.getAcceleration(&ax, &ay, &az);
   
-  // Convert to g-force (MPU6050 default range is ±2g)
+  // Convert to g-force
   float gx = ax / 16384.0;
   float gy = ay / 16384.0;
   float gz = az / 16384.0;
   
   // Calculate acceleration magnitude
   float magnitude = sqrt(gx*gx + gy*gy + gz*gz);
-  
   currentBio.acceleration = magnitude;
   
   // Detect movement and steps
@@ -172,7 +197,7 @@ void readActivityData() {
     currentBio.lastMovement = millis();
     
     // Step detection
-    if (delta > 0.8 && millis() - lastStepTime > 300) { // Step threshold and timing
+    if (delta > 0.8 && millis() - lastStepTime > 300) {
       stepCount++;
       lastStepTime = millis();
       Serial.println("Step detected! Count: " + String(stepCount));
@@ -198,6 +223,28 @@ String detectActivity() {
   } else {
     return "Sitting";
   }
+}
+
+void sendBiometricData() {
+  // Create JSON message with biometric data
+  StaticJsonDocument<300> doc;
+  doc["type"] = "BIOMETRIC_DATA";
+  doc["nodeType"] = "WEARABLE";
+  doc["nodeId"] = mesh.getNodeId();
+  doc["timestamp"] = currentBio.timestamp;
+  doc["heartRate"] = currentBio.heartRate;
+  doc["activity"] = currentBio.activity;
+  doc["stepCount"] = currentBio.stepCount;
+  doc["acceleration"] = currentBio.acceleration;
+  doc["lastMovement"] = currentBio.lastMovement;
+  doc["sessionActive"] = sessionActive;
+  doc["currentUser"] = currentUser;
+  
+  String message;
+  serializeJson(doc, message);
+  
+  mesh.sendBroadcast(message);
+  Serial.println("Biometric data sent to mesh");
 }
 
 void updateDisplay() {
@@ -232,14 +279,17 @@ void updateDisplay() {
         break;
         
       case 2:
-        // System info
+        // Session and mesh info
         display.setCursor(0, 15);
-        display.print("System Status");
-        display.setCursor(0, 30);
-        display.printf("Uptime: %lus", millis()/1000);
+        if (sessionActive) {
+          display.print("Session: ON");
+          display.setCursor(0, 30);
+          display.print("User: " + currentUser.substring(0, 8));
+        } else {
+          display.print("Session: OFF");
+        }
         display.setCursor(0, 45);
-        unsigned long timeSinceMove = (millis() - currentBio.lastMovement) / 1000;
-        display.printf("Last move: %lus", timeSinceMove);
+        display.printf("Mesh: %d nodes", mesh.getNodeList().size());
         break;
     }
     
@@ -257,7 +307,7 @@ void showWelcomeScreen() {
   display.setCursor(0, 40);
   display.print("Wearable");
   display.setCursor(0, 60);
-  display.print("Ready!");
+  display.print("Mesh Ready!");
   display.sendBuffer();
 }
 
@@ -271,12 +321,71 @@ void showError(String error) {
   display.sendBuffer();
 }
 
-void printBiometrics() {
-  Serial.println("=== Biometric Data ===");
-  Serial.printf("Heart Rate: %d BPM\n", currentBio.heartRate);
-  Serial.printf("Activity: %s\n", currentBio.activity.c_str());
-  Serial.printf("Step Count: %d\n", currentBio.stepCount);
-  Serial.printf("Acceleration: %.2f g\n", currentBio.acceleration);
-  Serial.printf("Last Movement: %lu ms ago\n", millis() - currentBio.lastMovement);
-  Serial.println("======================");
+// Mesh callbacks
+void receivedCallback(uint32_t from, String &msg) {
+  Serial.printf("Received from %u: %s\n", from, msg.c_str());
+  
+  StaticJsonDocument<300> doc;
+  deserializeJson(doc, msg);
+  
+  String msgType = doc["type"];
+  
+  if (msgType == "SESSION_START") {
+    sessionActive = true;
+    currentUser = doc["userId"].as<String>();  // Fix: explicit conversion
+    
+    // Reset step counter for new session
+    stepCount = 0;
+    
+    // Show session start notification
+    display.clearBuffer();
+    display.setFont(u8g2_font_8x13_tf);
+    display.setCursor(0, 30);
+    display.print("Session");
+    display.setCursor(0, 50);
+    display.print("Started!");
+    display.sendBuffer();
+    delay(2000);
+    
+    Serial.println("Session started for: " + currentUser);
+    
+  } else if (msgType == "SESSION_END") {
+    sessionActive = false;
+    currentUser = "";
+    
+    // Show session end notification
+    display.clearBuffer();
+    display.setFont(u8g2_font_8x13_tf);
+    display.setCursor(0, 30);
+    display.print("Session");
+    display.setCursor(0, 50);
+    display.print("Ended");
+    display.sendBuffer();
+    delay(2000);
+    
+    Serial.println("Session ended");
+    
+  } else if (msgType == "REQUEST_BIO_DATA") {
+    // Send immediate biometric data
+    sendBiometricData();
+  }
+}
+
+void newConnectionCallback(uint32_t nodeId) {
+  Serial.printf("New Connection: %u\n", nodeId);
+  
+  // Send identification message
+  StaticJsonDocument<150> doc;
+  doc["type"] = "NODE_IDENTIFICATION";
+  doc["nodeType"] = "WEARABLE";
+  doc["capabilities"] = "heart_rate,activity,steps,acceleration";
+  doc["version"] = "1.0";
+  
+  String message;
+  serializeJson(doc, message);
+  mesh.sendSingle(nodeId, message);
+}
+
+void changedConnectionCallback() {
+  Serial.printf("Changed connections. Nodes: %d\n", mesh.getNodeList().size());
 }
