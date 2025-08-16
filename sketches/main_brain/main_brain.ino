@@ -15,6 +15,7 @@
 const int RST_PIN = D1;
 const int SS_PIN = D2;
 const int LED_PIN = D0;
+const int BUZZER_PIN = D8;
 
 // Objects
 MFRC522 rfid(SS_PIN, RST_PIN);
@@ -26,6 +27,27 @@ Scheduler userScheduler;
 bool sessionActive = false;
 String currentUser = "";
 unsigned long sessionStart = 0;
+
+enum PomodoroState {
+  IDLE,
+  WORK_SESSION,
+  SHORT_BREAK,
+  LONG_BREAK
+};
+
+struct PomodoroSession {
+  PomodoroState currentState = IDLE;
+  unsigned long stateStartTime = 0;     // Start time of the current state
+  unsigned long stateDuration = 0;      // Current state duration in milliseconds
+  int completedCycles = 0;              // Number of completed pomodoro cycles
+  int workDuration = 25;                 // Default 25 minutes
+  int shortBreakDuration = 5;           // Default 5 minutes
+  int longBreakDuration = 15;            // Default 15 minutes
+  bool breakSnoozed = false;            // Snooze state for breaks
+  int snoozeCount = 0;                  // Number of times snoozed
+  unsigned long snoozeTime = 0;         // Time when snooze was activated
+  bool breakComplianceChecked = false;  // Compliance check for breaks
+};
 
 // Environmental data from mesh
 struct EnvironmentData {
@@ -53,9 +75,17 @@ struct BiometricData {
 
 BiometricData bioData;
 
+// Pomodoro session instance
+PomodoroSession pomodoro;
+
 // Connected nodes
 uint32_t environmentNodeId = 0;
 uint32_t wearableNodeId = 0;
+
+
+
+
+
 
 void setup() {
   Serial.begin(115200);
@@ -105,6 +135,7 @@ void setup() {
 void loop() {
   mesh.update();
   handleRFID();
+  updatePomodoroTimer();
   updateDisplay();
   delay(100);
 }
@@ -128,11 +159,23 @@ void handleRFID() {
   }
   
   Serial.println("Card detected: " + cardId);
-  
-  if (!sessionActive) {
-    startSession(cardId);
+
+   // Simple authentication - add your known card IDs here
+  if (cardId == "9c13c3") { // Temporary: accept any card->  || cardId.length() > 0
+    if (!sessionActive) {
+      startSession(cardId);
+    } else {
+      // Double-tap RFID during break = snooze
+      if (pomodoro.currentState == SHORT_BREAK || pomodoro.currentState == LONG_BREAK) {
+        snoozeBreak();
+      } else {
+        endSession();
+      }
+    }
   } else {
-    endSession();
+    // Authentication failed
+    playAuthFailSound();
+    Serial.println("Authentication failed for card: " + cardId);
   }
   
   rfid.PICC_HaltA();
@@ -145,7 +188,13 @@ void startSession(String userId) {
   sessionStart = millis();
   
   digitalWrite(LED_PIN, HIGH);
+
+  // Play sound for session start
+  playSessionStartSound();
   
+  // Initialize pomodoro timer
+  initializePomodoro();
+
   // Notify all nodes about session start
   StaticJsonDocument<150> sessionMsg;
   sessionMsg["type"] = "SESSION_START";
@@ -169,6 +218,12 @@ void endSession() {
   currentUser = "";
   
   digitalWrite(LED_PIN, LOW);
+
+  // Play sound for session end
+  playSessionCompleteSound();
+
+  // Stop pomodoro timer
+  pomodoro.currentState = IDLE;
   
   // Notify all nodes about session end
   StaticJsonDocument<150> sessionMsg;
@@ -187,17 +242,12 @@ void endSession() {
 
 void updateDisplay() {
   if (sessionActive) {
-    // Show session info with environmental and biometric data
-    unsigned long elapsed = (millis() - sessionStart) / 1000;
-    int minutes = elapsed / 60;
-    int seconds = elapsed % 60;
-    
     static unsigned long lastDisplaySwitch = 0;
     static int displayMode = 0;
     
     // Switch between different data views every 3 seconds
     if (millis() - lastDisplaySwitch > 3000) {
-      displayMode = (displayMode + 1) % 3;
+      displayMode = (displayMode + 1) % 4; // Now 4 modes instead of 3
       lastDisplaySwitch = millis();
     }
     
@@ -205,14 +255,29 @@ void updateDisplay() {
     
     switch (displayMode) {
       case 0:
-        // Session info
+        // Pomodoro timer info
         lcd.setCursor(0, 0);
-        lcd.print("Session Active");
+        lcd.print(getPomodoroStateText());
         lcd.setCursor(0, 1);
-        lcd.printf("Time: %02d:%02d", minutes, seconds);
+        lcd.print("Time: " + getTimeRemainingText());
+        if (pomodoro.breakSnoozed && pomodoro.snoozeCount > 0) {
+          lcd.setCursor(12, 1);
+          lcd.printf("S%d", pomodoro.snoozeCount);
+        }
         break;
         
-      case 1:
+      case 1: {
+        // Session and cycle info
+        lcd.setCursor(0, 0);
+        lcd.printf("Cycles: %d", pomodoro.completedCycles);
+        lcd.setCursor(0, 1);
+        unsigned long elapsed = (millis() - sessionStart) / 1000;
+        int minutes = elapsed / 60;
+        lcd.printf("Total: %dm", minutes);
+        break;
+      }
+        
+      case 2:
         // Environmental data
         if (envData.dataAvailable) {
           lcd.setCursor(0, 0);
@@ -227,7 +292,7 @@ void updateDisplay() {
         }
         break;
         
-      case 2:
+      case 3:
         // Biometric data
         if (bioData.dataAvailable) {
           lcd.setCursor(0, 0);
@@ -392,4 +457,217 @@ void analyzeBiometrics() {
   if (bioData.heartRate > 100 && sessionActive) {
     Serial.println("Biometric Alert: High heart rate - take a break");
   }
+}
+
+void playSessionStartSound() {
+  // Cheerful ascending tone for successful login
+  int melody[] = {523, 659, 784, 1047}; // C5, E5, G5, C6
+  int durations[] = {200, 200, 200, 400};
+  
+  for (int i = 0; i < 4; i++) {
+    tone(BUZZER_PIN, melody[i], durations[i]);
+    delay(durations[i] + 50);
+  }
+  noTone(BUZZER_PIN);
+}
+
+void playAuthFailSound() {
+  // Low descending tone for failed authentication
+  for (int i = 0; i < 3; i++) {
+    tone(BUZZER_PIN, 200, 300);
+    delay(400);
+  }
+  noTone(BUZZER_PIN);
+}
+
+void playWorkSessionStartSound() {
+  // Single confident tone
+  tone(BUZZER_PIN, 880, 500); // A5
+  delay(600);
+  noTone(BUZZER_PIN);
+}
+
+void playBreakStartSound() {
+  // Gentle double tone
+  tone(BUZZER_PIN, 659, 300); // E5
+  delay(400);
+  tone(BUZZER_PIN, 523, 300); // C5
+  delay(400);
+  noTone(BUZZER_PIN);
+}
+
+void playLongBreakStartSound() {
+  // Celebration melody
+  int melody[] = {523, 659, 784, 659, 523}; // C5, E5, G5, E5, C5
+  for (int i = 0; i < 5; i++) {
+    tone(BUZZER_PIN, melody[i], 200);
+    delay(250);
+  }
+  noTone(BUZZER_PIN);
+}
+
+void playSessionCompleteSound() {
+  // Achievement sound
+  int melody[] = {784, 880, 988, 1047}; // G5, A5, B5, C6
+  for (int i = 0; i < 4; i++) {
+    tone(BUZZER_PIN, melody[i], 300);
+    delay(350);
+  }
+  noTone(BUZZER_PIN);
+}
+
+void initializePomodoro() {
+  pomodoro.currentState = WORK_SESSION;
+  pomodoro.stateStartTime = millis();
+  pomodoro.stateDuration = pomodoro.workDuration * 60 * 1000UL; // Convert to milliseconds
+  pomodoro.completedCycles = 0;
+  pomodoro.breakSnoozed = false;
+  pomodoro.snoozeCount = 0;
+  pomodoro.breakComplianceChecked = false;
+  
+  playWorkSessionStartSound();
+  broadcastPomodoroState();
+  
+  Serial.println("Pomodoro work session started!");
+}
+
+void updatePomodoroTimer() {
+  if (!sessionActive || pomodoro.currentState == IDLE) return;
+  
+  unsigned long elapsed = millis() - pomodoro.stateStartTime;
+  
+  // Check if current state duration is complete
+  if (elapsed >= pomodoro.stateDuration) {
+    transitionToNextState();
+  }
+  
+  // Check break compliance during breaks
+  if ((pomodoro.currentState == SHORT_BREAK || pomodoro.currentState == LONG_BREAK) 
+      && !pomodoro.breakComplianceChecked && elapsed > 60000) { // Check after 1 minute
+    checkBreakCompliance();
+  }
+}
+
+void transitionToNextState() {
+  switch (pomodoro.currentState) {
+    case WORK_SESSION:
+      pomodoro.completedCycles++;
+      
+      // Long break every 4 cycles, otherwise short break
+      if (pomodoro.completedCycles % 4 == 0) {
+        pomodoro.currentState = LONG_BREAK;
+        pomodoro.stateDuration = pomodoro.longBreakDuration * 60 * 1000UL;
+        playLongBreakStartSound();
+        Serial.printf("Long break started! Cycle %d completed.\n", pomodoro.completedCycles);
+      } else {
+        pomodoro.currentState = SHORT_BREAK;
+        pomodoro.stateDuration = pomodoro.shortBreakDuration * 60 * 1000UL;
+        playBreakStartSound();
+        Serial.printf("Short break started! Cycle %d completed.\n", pomodoro.completedCycles);
+      }
+      break;
+      
+    case SHORT_BREAK:
+    case LONG_BREAK:
+      pomodoro.currentState = WORK_SESSION;
+      pomodoro.stateDuration = pomodoro.workDuration * 60 * 1000UL;
+      playWorkSessionStartSound();
+      Serial.println("Work session started!");
+      break;
+      
+    default:
+      break;
+  }
+  
+  pomodoro.stateStartTime = millis();
+  pomodoro.breakSnoozed = false;
+  pomodoro.snoozeCount = 0;
+  pomodoro.breakComplianceChecked = false;
+  
+  broadcastPomodoroState();
+}
+
+void snoozeBreak() {
+  if (pomodoro.currentState == SHORT_BREAK || pomodoro.currentState == LONG_BREAK) {
+    pomodoro.stateDuration += 5 * 60 * 1000UL; // Add 5 minutes
+    pomodoro.snoozeCount++;
+    pomodoro.breakSnoozed = true;
+    
+    // Brief acknowledgment sound
+    tone(BUZZER_PIN, 440, 200);
+    delay(300);
+    noTone(BUZZER_PIN);
+    
+    Serial.printf("Break snoozed for 5 minutes. Snooze count: %d\n", pomodoro.snoozeCount);
+    broadcastPomodoroState();
+  }
+}
+
+void checkBreakCompliance() {
+  if (!bioData.dataAvailable) return;
+  
+  unsigned long timeSinceMovement = millis() - bioData.lastMovement;
+  
+  if (timeSinceMovement < 30000) { // Moved within last 30 seconds
+    Serial.println("Break compliance: User is moving - good!");
+  } else {
+    Serial.println("Break compliance: Consider moving around!");
+    // Send gentle reminder to mesh
+    StaticJsonDocument<150> reminderMsg;
+    reminderMsg["type"] = "MOVEMENT_REMINDER";
+    reminderMsg["message"] = "Time to move around!";
+    
+    String message;
+    serializeJson(reminderMsg, message);
+    mesh.sendBroadcast(message);
+  }
+  
+  pomodoro.breakComplianceChecked = true;
+}
+
+void broadcastPomodoroState() {
+  StaticJsonDocument<300> doc;
+  doc["type"] = "POMODORO_STATE";
+  doc["state"] = pomodoro.currentState;
+  doc["timeRemaining"] = (pomodoro.stateDuration - (millis() - pomodoro.stateStartTime)) / 1000;
+  doc["completedCycles"] = pomodoro.completedCycles;
+  doc["snoozed"] = pomodoro.breakSnoozed;
+  doc["snoozeCount"] = pomodoro.snoozeCount;
+  
+  String stateText;
+  switch (pomodoro.currentState) {
+    case WORK_SESSION: stateText = "WORK"; break;
+    case SHORT_BREAK: stateText = "SHORT_BREAK"; break;
+    case LONG_BREAK: stateText = "LONG_BREAK"; break;
+    default: stateText = "IDLE"; break;
+  }
+  doc["stateText"] = stateText;
+  
+  String message;
+  serializeJson(doc, message);
+  mesh.sendBroadcast(message);
+  
+  Serial.println("Pomodoro state broadcasted: " + stateText);
+}
+
+String getPomodoroStateText() {
+  switch (pomodoro.currentState) {
+    case WORK_SESSION: return "WORK";
+    case SHORT_BREAK: return "BREAK";
+    case LONG_BREAK: return "LONG BREAK";
+    default: return "IDLE";
+  }
+}
+
+String getTimeRemainingText() {
+  if (pomodoro.currentState == IDLE) return "00:00";
+  
+  unsigned long elapsed = millis() - pomodoro.stateStartTime;
+  unsigned long remaining = (pomodoro.stateDuration > elapsed) ? 
+                            (pomodoro.stateDuration - elapsed) / 1000 : 0;
+  
+  int minutes = remaining / 60;
+  int seconds = remaining % 60;
+  
+  return String(minutes) + ":" + (seconds < 10 ? "0" : "") + String(seconds);
 }
