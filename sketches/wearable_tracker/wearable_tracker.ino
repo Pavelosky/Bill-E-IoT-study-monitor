@@ -2,14 +2,17 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <MPU6050.h>
-#include "painlessMesh.h"
 #include <ArduinoJson.h>
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
 
-// Mesh network config
-// Mesh network config
-#define MESH_PREFIX     "BillE_Focus_Mesh"
-#define MESH_PASSWORD   "FocusBot2025"
-#define MESH_PORT       5555
+// WiFi and MQTT configuration
+#define WIFI_SSID       "TechLabNet"   
+#define WIFI_PASSWORD   "BC6V6DE9A8T9"      
+#define MQTT_SERVER     "192.168.1.107"     
+#define MQTT_PORT       1883
+#define MQTT_USER       "bille_mqtt"
+#define MQTT_PASSWORD   "BillE2025_Secure!" 
 
 // Pin definitions
 #define OLED_SDA        D2
@@ -20,8 +23,8 @@
 // Objects
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C display(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 MPU6050 mpu;
-painlessMesh mesh;
-Scheduler userScheduler;
+WiFiClient espClient;
+PubSubClient client(espClient);
 
 // Biometric data structure
 struct BiometricData {
@@ -57,40 +60,6 @@ struct PomodoroInfo {
 
 PomodoroInfo pomodoroInfo;
 
-// Add motivational messages arrays
-const char* workMotivation[] = {
-  "Stay Focused!",
-  "You Got This!",
-  "Deep Work Mode",
-  "Focus Time!",
-  "Make It Count!",
-  "Zone In!",
-  "Productive!",
-  "Laser Focus!"
-};
-
-const char* breakMotivation[] = {
-  "Time to Move!",
-  "Stretch Break",
-  "Walk Around",
-  "Rest & Recharge",
-  "Take a Breath",
-  "Move Your Body",
-  "Step Away",
-  "Refresh Time"
-};
-
-const char* achievementMessages[] = {
-  "Cycle Complete!",
-  "Well Done!",
-  "Great Progress!",
-  "Keep Going!",
-  "Awesome Work!",
-  "You're Crushing It!",
-  "Fantastic!"
-};
-
-int currentMotivationIndex = 0;
 
 // Activity detection variables
 float lastAccelMagnitude = 0;
@@ -101,14 +70,11 @@ unsigned long lastStepTime = 0;
 bool sessionActive = false;
 String currentUser = "";
 
-// Function prototypes
-void sendBiometricData();
-Task taskSendData(TASK_SECOND * 5, TASK_FOREVER, &sendBiometricData);
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("Bill-E Wearable Tracker with Mesh Starting...");
+ Serial.println("Bill-E Wearable Tracker with MQTT Starting...");
   
   // Initialize pins
   pinMode(HEART_LED, OUTPUT);
@@ -125,7 +91,7 @@ void setup() {
   Serial.println("Initializing MPU6050...");
   mpu.initialize();
   
-  // Test connection
+  // Test gyro connection
   if (mpu.testConnection()) {
     Serial.println("MPU6050 connection successful");
   } else {
@@ -134,33 +100,40 @@ void setup() {
     while (1) delay(10);
   }
   
-  // Initialize mesh network
-  mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
-  mesh.init(MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT);
-  mesh.onReceive(&receivedCallback);
-  mesh.onNewConnection(&newConnectionCallback);
-  mesh.onChangedConnections(&changedConnectionCallback);
-  
-  // Add task to send data every 5 seconds
-  userScheduler.addTask(taskSendData);
-  taskSendData.enable();
+  // Setup WiFi and MQTT
+  setup_wifi();
+  client.setServer(MQTT_SERVER, MQTT_PORT);
+  client.setCallback(mqtt_callback);
   
   // Welcome screen
   showWelcomeScreen();
   
-  Serial.println("Wearable Tracker with Mesh Ready!");
-  Serial.printf("Node ID: %u\n", mesh.getNodeId());
+  Serial.println("Wearable Tracker with MQTT Ready!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
   delay(2000);
 }
 
 void loop() {
-  mesh.update();
   
-  // Read sensors every second
+  if (!client.connected()) {
+    reconnect_mqtt();
+  }
+  client.loop();
+  
+  // Read sensors every 5 seconds
   static unsigned long lastRead = 0;
-  if (millis() - lastRead > 1000) {
+  if (millis() - lastRead > 5000) {
     readBiometrics();
+    publishBiometricData();
     lastRead = millis();
+  }
+  
+  // Check for health alerts every 30 seconds
+  static unsigned long lastHealthCheck = 0;
+  if (millis() - lastHealthCheck > 30000) {
+    publishHealthAlerts();
+    lastHealthCheck = millis();
   }
   
   // Update display
@@ -282,70 +255,23 @@ String detectActivity() {
   }
 }
 
-void sendBiometricData() {
-  // Create JSON message with biometric data
-  StaticJsonDocument<300> doc;
-  doc["type"] = "BIOMETRIC_DATA";
-  doc["nodeType"] = "WEARABLE";
-  doc["nodeId"] = mesh.getNodeId();
-  doc["timestamp"] = currentBio.timestamp;
-  doc["heartRate"] = currentBio.heartRate;
-  doc["activity"] = currentBio.activity;
-  doc["stepCount"] = currentBio.stepCount;
-  doc["acceleration"] = currentBio.acceleration;
-  doc["lastMovement"] = currentBio.lastMovement;
-  doc["sessionActive"] = sessionActive;
-  doc["currentUser"] = currentUser;
-  
-  // Add Pomodoro context
-  if (pomodoroInfo.dataAvailable) {
-    doc["pomodoroState"] = pomodoroInfo.currentState;
-    doc["pomodoroTimeRemaining"] = pomodoroInfo.timeRemaining;
-    doc["breakCompliant"] = (millis() - currentBio.lastMovement) < 30000;
-  }
 
-  String message;
-  serializeJson(doc, message);
-  
-  mesh.sendBroadcast(message);
-  Serial.println("Biometric data sent to mesh");
-}
 
 void updateDisplay() {
   static unsigned long lastDisplayUpdate = 0;
   static int displayMode = 0;
-  static unsigned long motivationChangeTime = 0;
-  static unsigned long achievementShowTime = 0;
-  static bool showingAchievement = false;
 
   // Check if we should show achievement message
   static int lastCompletedCycles = 0;
   if (pomodoroInfo.completedCycles > lastCompletedCycles && pomodoroInfo.dataAvailable) {
-    showingAchievement = true;
-    achievementShowTime = millis();
     lastCompletedCycles = pomodoroInfo.completedCycles;
   }
-  
-  // Show achievement for 3 seconds
-  if (showingAchievement) {
-    if (millis() - achievementShowTime < 3000) {
-      showAchievement();
-      return;
-    } else {
-      showingAchievement = false;
-    }
-  }
-  
-  // Change motivational messages every 30 seconds
-  if (millis() - motivationChangeTime > 30000) {
-    currentMotivationIndex++;
-    motivationChangeTime = millis();
-  }
+
 
 // Main display rotation every 4 seconds
   if (millis() - lastDisplayUpdate > 4000) {
     // Adjust display mode count based on session state
-    int maxModes = sessionActive ? 6 : 3; // More modes during active session
+    int maxModes = sessionActive ? 4 : 3; // More modes during active session
     displayMode = (displayMode + 1) % maxModes;
     lastDisplayUpdate = millis();
   }
@@ -354,16 +280,6 @@ void updateDisplay() {
     // Enhanced display modes during active Pomodoro session
     switch (displayMode) {
       case 0:
-        // Pomodoro countdown (primary display)
-        showPomodoroCountdown();
-        break;
-        
-      case 1:
-        // Motivational message
-        showMotivationalMessage();
-        break;
-        
-      case 2:
         // Break compliance (only during breaks)
         if (pomodoroInfo.currentState == SHORT_BREAK || pomodoroInfo.currentState == LONG_BREAK) {
           showBreakCompliance();
@@ -373,20 +289,21 @@ void updateDisplay() {
         }
         break;
         
-      case 3:
+      case 1:
         // Heart rate and activity focus
         showBiometricData();
         break;
         
-      case 4:
+      case 2:
         // Step count and activity encouragement
         showActivityStatus();
         break;
         
-      case 5:
-        // Mesh and session info
-        showSessionInfo();
+      case 3:
+        // MQTT and connection status
+        showMQTTStatus();
         break;
+
     }
   } else {
     // Original display modes when not in active session
@@ -398,7 +315,7 @@ void updateDisplay() {
         showActivityStatus();
         break;
       case 2:
-        showSessionInfo();
+        showMQTTStatus();
         break;
     }
   }
@@ -420,8 +337,15 @@ void showBiometricData() {
     display.setCursor(0, 60);
     if (pomodoroInfo.currentState == WORK_SESSION) {
       display.print("Focus Mode");
-    } else {
-      display.print(getActivityEncouragement());
+    }
+    else if (pomodoroInfo.currentState == SHORT_BREAK) {
+      display.print("Short Break");
+    }
+    else if (pomodoroInfo.currentState == LONG_BREAK) {
+      display.print("Long Break");
+    }
+    else {
+      display.print("Idle");
     }
   }
   
@@ -437,7 +361,27 @@ void showWelcomeScreen() {
   display.setCursor(0, 40);
   display.print("Wearable");
   display.setCursor(0, 60);
-  display.print("Mesh Ready!");
+  display.print("MQTT Ready!");
+  display.sendBuffer();
+}
+
+// TODO: For debugging - MQTT status to be removed
+void showMQTTStatus() {
+  display.clearBuffer();
+  display.setFont(u8g2_font_6x10_tf);
+  
+  display.setCursor(0, 15);
+  display.print("MQTT Status");
+  display.setCursor(0, 30);
+  display.print("Broker: ");
+  display.print(client.connected() ? "OK" : "ERR");
+  display.setCursor(0, 45);
+  display.print("WiFi: ");
+  display.print(WiFi.status() == WL_CONNECTED ? "OK" : "ERR");
+  display.setCursor(0, 60);
+  display.print("IP: ");
+  display.print(WiFi.localIP().toString().substring(10)); // Show last part of IP
+  
   display.sendBuffer();
 }
 
@@ -467,168 +411,6 @@ void showActivityStatus() {
   display.sendBuffer();
 }
 
-void showSessionInfo() {
-  display.clearBuffer();
-  display.setFont(u8g2_font_6x10_tf);
-  
-  display.setCursor(0, 15);
-  if (sessionActive) {
-    display.print("Session: ON");
-    display.setCursor(0, 30);
-    display.print("User: " + currentUser.substring(0, 8));
-    if (pomodoroInfo.dataAvailable) {
-      display.setCursor(0, 45);
-      display.printf("Cycles: %d", pomodoroInfo.completedCycles);
-    }
-  } else {
-    display.print("Session: OFF");
-  }
-  display.setCursor(0, 60);
-  display.printf("Mesh: %d nodes", mesh.getNodeList().size());
-  
-  display.sendBuffer();
-}
-
-// Mesh callbacks
-void receivedCallback(uint32_t from, String &msg) {
-  Serial.printf("Received from %u: %s\n", from, msg.c_str());
-  
-  StaticJsonDocument<300> doc;
-  deserializeJson(doc, msg);
-  
-  String msgType = doc["type"];
-  
-  if (msgType == "SESSION_START") {
-    sessionActive = true;
-    currentUser = doc["userId"].as<String>();  // Fix: explicit conversion
-    
-    // Reset step counter for new session
-    stepCount = 0;
-    
-    // Show session start notification
-    display.clearBuffer();
-    display.setFont(u8g2_font_8x13_tf);
-    display.setCursor(0, 30);
-    display.print("Session");
-    display.setCursor(0, 50);
-    display.print("Started!");
-    display.sendBuffer();
-    delay(2000);
-    
-    Serial.println("Session started for: " + currentUser);
-    
-  } else if (msgType == "SESSION_END") {
-    sessionActive = false;
-    currentUser = "";
-    
-    // Show session end notification
-    display.clearBuffer();
-    display.setFont(u8g2_font_8x13_tf);
-    display.setCursor(0, 30);
-    display.print("Session");
-    display.setCursor(0, 50);
-    display.print("Ended");
-    display.sendBuffer();
-    delay(2000);
-    
-    Serial.println("Session ended");
-    
-  } else if (msgType == "REQUEST_BIO_DATA") {
-    // Send immediate biometric data
-    sendBiometricData();
-  } else if (msgType == "POMODORO_STATE") {
-    // Update Pomodoro information
-    pomodoroInfo.currentState = (PomodoroState)doc["state"].as<int>();
-    pomodoroInfo.timeRemaining = doc["timeRemaining"];
-    pomodoroInfo.completedCycles = doc["completedCycles"];
-    pomodoroInfo.snoozed = doc["snoozed"];
-    pomodoroInfo.snoozeCount = doc["snoozeCount"];
-    pomodoroInfo.stateText = doc["stateText"].as<String>();
-    pomodoroInfo.dataAvailable = true;
-    pomodoroInfo.lastUpdate = millis();
-    
-    Serial.println("Pomodoro state updated: " + pomodoroInfo.stateText);
-    Serial.printf("Time remaining: %lu seconds\n", pomodoroInfo.timeRemaining);
-  
-  } else if (msgType == "MOVEMENT_REMINDER") {
-    // Show movement reminder on display
-    String reminderMsg = doc["message"].as<String>();
-    
-    display.clearBuffer();
-    display.setFont(u8g2_font_8x13_tf);
-    display.setCursor(0, 30);
-    display.print(reminderMsg);
-    display.sendBuffer();
-    
-    Serial.println("Movement reminder: " + reminderMsg);
-    
-    // Brief flash of heart rate LED
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(HEART_LED, HIGH);
-      delay(100);
-      digitalWrite(HEART_LED, LOW);
-      delay(100);
-    }
-  }
-}
-
-void newConnectionCallback(uint32_t nodeId) {
-  Serial.printf("New Connection: %u\n", nodeId);
-  
-  // Send identification message
-  StaticJsonDocument<150> doc;
-  doc["type"] = "NODE_IDENTIFICATION";
-  doc["nodeType"] = "WEARABLE";
-  doc["capabilities"] = "heart_rate,activity,steps,acceleration";
-  doc["version"] = "1.0";
-  
-  String message;
-  serializeJson(doc, message);
-  mesh.sendSingle(nodeId, message);
-}
-
-void changedConnectionCallback() {
-  Serial.printf("Changed connections. Nodes: %d\n", mesh.getNodeList().size());
-}
-
-void showPomodoroCountdown() {
-  display.clearBuffer();
-  display.setFont(u8g2_font_8x13_tf);
-  
-  // Show state and countdown
-  display.setCursor(0, 15);
-  display.print(pomodoroInfo.stateText);
-  
-  // Show countdown timer
-  display.setFont(u8g2_font_10x20_tf);
-  display.setCursor(0, 40);
-  
-  int minutes = pomodoroInfo.timeRemaining / 60;
-  int seconds = pomodoroInfo.timeRemaining % 60;
-  
-  if (minutes < 100) {
-    display.printf("%02d:%02d", minutes, seconds);
-  } else {
-    display.printf("%d:%02d", minutes, seconds);
-  }
-  
-  // Show cycle count
-  display.setFont(u8g2_font_6x10_tf);
-  display.setCursor(0, 55);
-  display.printf("Cycles: %d", pomodoroInfo.completedCycles);
-  
-  // Show snooze indicator
-  if (pomodoroInfo.snoozed && pomodoroInfo.snoozeCount > 0) {
-    display.setCursor(70, 55);
-    display.printf("Snooze:%d", pomodoroInfo.snoozeCount);
-  }
-  
-  // Add progress bar for visual appeal
-  drawProgressBar();
-  
-  display.sendBuffer();
-}
-
 void drawProgressBar() {
   // Calculate progress based on Pomodoro state
   int totalDuration;
@@ -639,7 +421,12 @@ void drawProgressBar() {
     default: return; // No progress bar for IDLE
   }
   
-  int elapsed = totalDuration - pomodoroInfo.timeRemaining;
+  // Use real-time remaining time for progress calculation
+  unsigned long realTimeElapsed = (millis() - pomodoroInfo.lastUpdate) / 1000;
+  unsigned long currentRemaining = (pomodoroInfo.timeRemaining > realTimeElapsed) ? 
+                                   (pomodoroInfo.timeRemaining - realTimeElapsed) : 0;
+  
+  int elapsed = totalDuration - currentRemaining;
   int progress = (elapsed * 120) / totalDuration; // 120 pixels wide
   
   // Draw progress bar frame
@@ -649,45 +436,6 @@ void drawProgressBar() {
   if (progress > 0) {
     display.drawBox(5, 59, progress, 4);
   }
-}
-
-void showMotivationalMessage() {
-  display.clearBuffer();
-  display.setFont(u8g2_font_8x13_tf);
-  
-  const char* message;
-  switch (pomodoroInfo.currentState) {
-    case WORK_SESSION:
-      message = workMotivation[currentMotivationIndex % 8];
-      break;
-    case SHORT_BREAK:
-    case LONG_BREAK:
-      message = breakMotivation[currentMotivationIndex % 8];
-      break;
-    default:
-      message = "Ready to Focus?";
-      break;
-  }
-  
-  // Center the message
-  int textWidth = display.getStrWidth(message);
-  int x = (128 - textWidth) / 2;
-  
-  display.setCursor(x, 35);
-  display.print(message);
-  
-  // Add some visual flair
-  if (pomodoroInfo.currentState == WORK_SESSION) {
-    // Work session - show focused icon
-    display.drawCircle(64, 15, 8);
-    display.drawDisc(64, 15, 4);
-  } else if (pomodoroInfo.currentState != IDLE) {
-    // Break time - show movement icon
-    display.drawTriangle(60, 10, 68, 10, 64, 20);
-    display.drawTriangle(60, 20, 68, 20, 64, 10);
-  }
-  
-  display.sendBuffer();
 }
 
 void showBreakCompliance() {
@@ -724,29 +472,6 @@ void showBreakCompliance() {
   display.sendBuffer();
 }
 
-void showAchievement() {
-  display.clearBuffer();
-  display.setFont(u8g2_font_10x20_tf);
-  
-  const char* message = achievementMessages[pomodoroInfo.completedCycles % 7];
-  
-  // Center the message
-  int textWidth = display.getStrWidth(message);
-  int x = (128 - textWidth) / 2;
-  
-  display.setCursor(x, 30);
-  display.print(message);
-  
-  // Show celebration stars
-  for (int i = 0; i < 6; i++) {
-    int starX = 20 + i * 20;
-    int starY = 50;
-    drawStar(starX, starY, 3);
-  }
-  
-  display.sendBuffer();
-}
-
 void drawStar(int x, int y, int size) {
   display.drawLine(x, y - size, x, y + size);
   display.drawLine(x - size, y, x + size, y);
@@ -754,17 +479,231 @@ void drawStar(int x, int y, int size) {
   display.drawLine(x - size/2, y + size/2, x + size/2, y - size/2);
 }
 
-String getActivityEncouragement() {
-  if (pomodoroInfo.currentState == SHORT_BREAK || pomodoroInfo.currentState == LONG_BREAK) {
-    unsigned long timeSinceMovement = millis() - currentBio.lastMovement;
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(WIFI_SSID);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  randomSeed(micros());
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void reconnect_mqtt() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
     
-    if (timeSinceMovement < 10000) {
-      return "Moving: Great!";
-    } else if (timeSinceMovement < 30000) {
-      return "Keep Moving";
+    // Create a random client ID
+    String clientId = "BillE-Wearable-";
+    clientId += String(random(0xffff), HEX);
+    
+    if (client.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
+      Serial.println("connected");
+      
+      // Subscribe to control topics
+      client.subscribe("bille/session/state");
+      client.subscribe("bille/pomodoro/state");
+      client.subscribe("bille/wearable/request");
+      client.subscribe("bille/alerts/movement");
+      
+      // Announce presence
+      client.publish("bille/status/wearable", "online", true);
+      
     } else {
-      return "Time to Move!";
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
     }
   }
-  return ""; // No encouragement during work
+}
+
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.println(message);
+  
+  StaticJsonDocument<300> doc;
+  deserializeJson(doc, message);
+  
+  // Handle session state updates
+  if (String(topic) == "bille/session/state") {
+    sessionActive = doc["active"];
+    currentUser = doc["userId"].as<String>();
+    
+    if (sessionActive) {
+      // Reset step counter for new session
+      stepCount = 0;
+      
+      // Show session start notification
+      display.clearBuffer();
+      display.setFont(u8g2_font_8x13_tf);
+      display.setCursor(0, 30);
+      display.print("Session");
+      display.setCursor(0, 50);
+      display.print("Started!");
+      display.sendBuffer();
+      delay(2000);
+      
+      Serial.println("Session started for: " + currentUser);
+    } else {
+      currentUser = "";
+      
+      // Show session end notification
+      display.clearBuffer();
+      display.setFont(u8g2_font_8x13_tf);
+      display.setCursor(0, 30);
+      display.print("Session");
+      display.setCursor(0, 50);
+      display.print("Ended");
+      display.sendBuffer();
+      delay(2000);
+      
+      Serial.println("Session ended");
+    }
+  }
+  
+  // Handle Pomodoro state updates
+  else if (String(topic) == "bille/pomodoro/state") {
+    pomodoroInfo.currentState = (PomodoroState)doc["state"].as<int>();
+    pomodoroInfo.timeRemaining = doc["timeRemaining"];
+    pomodoroInfo.completedCycles = doc["completedCycles"];
+    pomodoroInfo.snoozed = doc["snoozed"];
+    pomodoroInfo.snoozeCount = doc["snoozeCount"];
+    pomodoroInfo.stateText = doc["stateText"].as<String>();
+    pomodoroInfo.dataAvailable = true;
+    pomodoroInfo.lastUpdate = millis();
+    
+    Serial.println("Pomodoro state updated: " + pomodoroInfo.stateText);
+  }
+  
+  // Handle movement reminders
+  else if (String(topic) == "bille/alerts/movement") {
+    String reminderMsg = doc["message"].as<String>();
+    
+    display.clearBuffer();
+    display.setFont(u8g2_font_8x13_tf);
+    display.setCursor(0, 30);
+    display.print(reminderMsg);
+    display.sendBuffer();
+    
+    Serial.println("Movement reminder: " + reminderMsg);
+    
+    // Brief flash of heart rate LED
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(HEART_LED, HIGH);
+      delay(100);
+      digitalWrite(HEART_LED, LOW);
+      delay(100);
+    }
+  }
+  
+  // Handle data requests
+  else if (String(topic) == "bille/wearable/request") {
+    publishBiometricData();
+  }
+}
+
+void publishBiometricData() {
+  if (!client.connected()) {
+    reconnect_mqtt();
+  }
+  
+  // Publish individual sensor values to HA
+  client.publish("bille/sensors/heartrate", String(currentBio.heartRate).c_str());
+  client.publish("bille/sensors/steps", String(currentBio.stepCount).c_str());
+  client.publish("bille/sensors/activity", currentBio.activity.c_str());
+  
+  // Publish combined biometric data
+  StaticJsonDocument<400> doc;
+  doc["nodeType"] = "WEARABLE";
+  doc["timestamp"] = currentBio.timestamp;
+  doc["heartRate"] = currentBio.heartRate;
+  doc["activity"] = currentBio.activity;
+  doc["stepCount"] = currentBio.stepCount;
+  doc["acceleration"] = currentBio.acceleration;
+  doc["lastMovement"] = currentBio.lastMovement;
+  doc["sessionActive"] = sessionActive;
+  doc["currentUser"] = currentUser;
+  
+  // Add Pomodoro context
+  if (pomodoroInfo.dataAvailable) {
+    doc["pomodoroState"] = pomodoroInfo.currentState;
+    doc["pomodoroTimeRemaining"] = pomodoroInfo.timeRemaining;
+    doc["breakCompliant"] = (millis() - currentBio.lastMovement) < 30000;
+  }
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  client.publish("bille/data/biometric", jsonString.c_str());
+  
+  Serial.println("Biometric data published to MQTT");
+}
+
+void publishHealthAlerts() {
+  if (!sessionActive) return;
+  
+  StaticJsonDocument<300> alertDoc;
+  alertDoc["nodeType"] = "WEARABLE";
+  alertDoc["timestamp"] = millis();
+  alertDoc["userId"] = currentUser;
+  
+  bool hasAlert = false;
+  String alertMessage = "";
+  String alertLevel = "info";
+  
+  // Check for extended sitting during work sessions
+  unsigned long timeSinceMovement = millis() - currentBio.lastMovement;
+  
+  if (pomodoroInfo.currentState == WORK_SESSION && timeSinceMovement > 20 * 60 * 1000) { // 20 minutes
+    alertMessage = "Consider taking a short movement break";
+    alertLevel = "warning";
+    hasAlert = true;
+  }
+  
+  // Check heart rate during work
+  if (pomodoroInfo.currentState == WORK_SESSION && currentBio.heartRate > 100) {
+    alertMessage = "Heart rate elevated - consider relaxing";
+    alertLevel = "warning";
+    hasAlert = true;
+  }
+  
+  // Check break compliance
+  if ((pomodoroInfo.currentState == SHORT_BREAK || pomodoroInfo.currentState == LONG_BREAK) 
+      && timeSinceMovement > 2 * 60 * 1000) { // 2 minutes into break
+    alertMessage = "Break time - time to move around!";
+    alertLevel = "info";
+    hasAlert = true;
+  }
+  
+  if (hasAlert) {
+    alertDoc["alert"] = alertMessage;
+    alertDoc["level"] = alertLevel;
+    alertDoc["heartRate"] = currentBio.heartRate;
+    alertDoc["timeSinceMovement"] = timeSinceMovement / 1000; // seconds
+    alertDoc["pomodoroState"] = pomodoroInfo.currentState;
+    
+    String alertString;
+    serializeJson(alertDoc, alertString);
+    client.publish("bille/alerts/health", alertString.c_str());
+    
+    Serial.println("Health alert: " + alertMessage);
+  }
 }

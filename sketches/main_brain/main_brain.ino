@@ -1,15 +1,19 @@
-// ESP8266-1 Main Brain with Mesh Network - FIXED
+// ESP8266-1 Main Brain with Mesh Networ
 #include <MFRC522.h>
 #include <LiquidCrystal_I2C.h>
 #include <SPI.h>
 #include <Wire.h>
-#include "painlessMesh.h"
 #include <ArduinoJson.h>
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
 
-// Mesh network config
-#define MESH_PREFIX     "BillE_Focus_Mesh"
-#define MESH_PASSWORD   "FocusBot2025"
-#define MESH_PORT       5555
+//WiFi and MQTT configuration
+#define WIFI_SSID       "TechLabNet"   
+#define WIFI_PASSWORD   "BC6V6DE9A8T9"      
+#define MQTT_SERVER     "192.168.1.107"     
+#define MQTT_PORT       1883
+#define MQTT_USER       "bille_mqtt"
+#define MQTT_PASSWORD   "BillE2025_Secure!" 
 
 // Pin definitions
 const int RST_PIN = D1;
@@ -17,11 +21,28 @@ const int SS_PIN = D2;
 const int LED_PIN = D0;
 const int BUZZER_PIN = D8;
 
+// MQTT Topics
+const char* TOPIC_TEMPERATURE = "bille/sensors/temperature";
+const char* TOPIC_HUMIDITY = "bille/sensors/humidity";
+const char* TOPIC_LIGHT = "bille/sensors/light";
+const char* TOPIC_NOISE = "bille/sensors/noise";
+const char* TOPIC_HEARTRATE = "bille/sensors/heartrate";
+const char* TOPIC_STEPS = "bille/sensors/steps";
+const char* TOPIC_ACTIVITY = "bille/sensors/activity";
+const char* TOPIC_POMODORO_STATE = "bille/pomodoro/state";
+const char* TOPIC_POMODORO_TIME = "bille/pomodoro/time_remaining";
+const char* TOPIC_POMODORO_CYCLES = "bille/pomodoro/cycles";
+const char* TOPIC_SESSION_ACTIVE = "bille/session/active";
+const char* TOPIC_SESSION_USER = "bille/session/user";
+
 // Objects
 MFRC522 rfid(SS_PIN, RST_PIN);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
-painlessMesh mesh;
-Scheduler userScheduler;
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
+// MQTT state
+bool mqttConnected = false;
 
 // Session state
 bool sessionActive = false;
@@ -49,6 +70,8 @@ struct PomodoroSession {
   bool breakComplianceChecked = false;  // Compliance check for breaks
 };
 
+
+
 // Environmental data from mesh
 struct EnvironmentData {
   float temperature = 0;
@@ -60,7 +83,7 @@ struct EnvironmentData {
   bool dataAvailable = false;
 };
 
-EnvironmentData envData;
+
 
 // Biometric data from wearable
 struct BiometricData {
@@ -73,27 +96,20 @@ struct BiometricData {
   bool dataAvailable = false;
 };
 
-BiometricData bioData;
 
-// Pomodoro session instance
+// Instances of 3 objects above
 PomodoroSession pomodoro;
-
-// Connected nodes
-uint32_t environmentNodeId = 0;
-uint32_t wearableNodeId = 0;
-
-
-
-
-
+EnvironmentData envData;
+BiometricData bioData;
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("Bill-E Main Brain with Mesh Starting...");
+  Serial.println("Bill-E Main Brain with MQTT Starting...");
   
   // Initialize pins
   pinMode(LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   
   // Initialize I2C for LCD
@@ -103,7 +119,7 @@ void setup() {
   lcd.init();
   lcd.backlight();
 
-    // Reset RFID properly
+  // Reset RFID properly
   pinMode(RST_PIN, OUTPUT);
   digitalWrite(RST_PIN, LOW);
   delay(100);
@@ -118,35 +134,47 @@ void setup() {
   byte version = rfid.PCD_ReadRegister(rfid.VersionReg);
   Serial.printf("RFID Version: 0x%02X\n", version);
   
-  // Initialize mesh network
-  mesh.setDebugMsgTypes(ERROR | STARTUP | CONNECTION);
-  mesh.init(MESH_PREFIX, MESH_PASSWORD, &userScheduler, MESH_PORT);
-  mesh.onReceive(&receivedCallback);
-  mesh.onNewConnection(&newConnectionCallback);
-  mesh.onChangedConnections(&changedConnectionCallback);
+  // Setup WiFi and MQTT
+  setup_wifi();
+  mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
+  mqttClient.setCallback(mqtt_callback);
   
-  // Show welcome screen
   showWelcomeScreen();
   
-  Serial.println("Main Brain with Mesh Ready!");
-  Serial.printf("Node ID: %u\n", mesh.getNodeId());
+  Serial.println("Main Brain with MQTT Ready!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
 }
 
+ 
 void loop() {
-  mesh.update();
+  if (!mqttClient.connected()) {
+    reconnect_mqtt();
+  }
+  mqttClient.loop();
+  
   handleRFID();
   updatePomodoroTimer();
   updateDisplay();
+  
+  // Publish system status every 30 seconds
+  static unsigned long lastStatusUpdate = 0;
+  if (millis() - lastStatusUpdate > 30000) {
+    publishSystemStatus();
+    lastStatusUpdate = millis();
+  }
+  
+  // Publish Pomodoro state every 10 seconds during active session
+  static unsigned long lastPomodoroUpdate = 0;
+  if (sessionActive && millis() - lastPomodoroUpdate > 10000) {
+    publishPomodoroState();
+    lastPomodoroUpdate = millis();
+  }
+  
   delay(100);
 }
 
-void showWelcomeScreen() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Bill-E Focus Bot");
-  lcd.setCursor(0, 1);
-  lcd.print("Scan RFID card");
-}
+
 
 void handleRFID() {
   if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) {
@@ -188,29 +216,19 @@ void startSession(String userId) {
   sessionStart = millis();
   
   digitalWrite(LED_PIN, HIGH);
-
-  // Play sound for session start
+  
+  // Play success sound
   playSessionStartSound();
   
-  // Initialize pomodoro timer
+  // Initialize Pomodoro timer
   initializePomodoro();
-
-  // Notify all nodes about session start
-  StaticJsonDocument<150> sessionMsg;
-  sessionMsg["type"] = "SESSION_START";
-  sessionMsg["userId"] = userId;
-  sessionMsg["timestamp"] = millis();
   
-  String message;
-  serializeJson(sessionMsg, message);
-  mesh.sendBroadcast(message);
-  
-  // Request fresh data from all nodes
-  requestEnvironmentalData();
-  requestBiometricData();
+  // Publish session state to MQTT
+  publishSessionState();
   
   Serial.println("Session started for: " + userId);
 }
+
 
 void endSession() {
   sessionActive = false;
@@ -218,36 +236,35 @@ void endSession() {
   currentUser = "";
   
   digitalWrite(LED_PIN, LOW);
-
-  // Play sound for session end
+  
+  // Play session complete sound
   playSessionCompleteSound();
-
-  // Stop pomodoro timer
+  
+  // Reset Pomodoro timer
   pomodoro.currentState = IDLE;
   
-  // Notify all nodes about session end
-  StaticJsonDocument<150> sessionMsg;
-  sessionMsg["type"] = "SESSION_END";
-  sessionMsg["userId"] = lastUser;
-  sessionMsg["timestamp"] = millis();
-  
-  String message;
-  serializeJson(sessionMsg, message);
-  mesh.sendBroadcast(message);
+  // Publish final session state
+  publishSessionState();
+  publishPomodoroState();
   
   showWelcomeScreen();
   
-  Serial.println("Session ended");
+  Serial.printf("Session ended. Completed %d Pomodoro cycles.\n", pomodoro.completedCycles);
 }
 
 void updateDisplay() {
   if (sessionActive) {
+    // Show session info with environmental and biometric data
+    unsigned long elapsed = (millis() - sessionStart) / 1000;
+    int minutes = elapsed / 60;
+    int seconds = elapsed % 60;
+    
     static unsigned long lastDisplaySwitch = 0;
     static int displayMode = 0;
     
     // Switch between different data views every 3 seconds
     if (millis() - lastDisplaySwitch > 3000) {
-      displayMode = (displayMode + 1) % 4; // Now 4 modes instead of 3
+      displayMode = (displayMode + 1) % 5; // Now 5 modes including MQTT status
       lastDisplaySwitch = millis();
     }
     
@@ -257,7 +274,12 @@ void updateDisplay() {
       case 0:
         // Pomodoro timer info
         lcd.setCursor(0, 0);
-        lcd.print(getPomodoroStateText());
+        switch (pomodoro.currentState) {
+          case WORK_SESSION: lcd.print("WORK"); break;
+          case SHORT_BREAK: lcd.print("BREAK"); break;
+          case LONG_BREAK: lcd.print("LONG BREAK"); break;
+          default: lcd.print("IDLE"); break;
+        }
         lcd.setCursor(0, 1);
         lcd.print("Time: " + getTimeRemainingText());
         if (pomodoro.breakSnoozed && pomodoro.snoozeCount > 0) {
@@ -271,8 +293,6 @@ void updateDisplay() {
         lcd.setCursor(0, 0);
         lcd.printf("Cycles: %d", pomodoro.completedCycles);
         lcd.setCursor(0, 1);
-        unsigned long elapsed = (millis() - sessionStart) / 1000;
-        int minutes = elapsed / 60;
         lcd.printf("Total: %dm", minutes);
         break;
       }
@@ -306,96 +326,23 @@ void updateDisplay() {
           lcd.print("No Data");
         }
         break;
+        
+      case 4:
+        // MQTT and system status
+        lcd.setCursor(0, 0);
+        lcd.print("MQTT: ");
+        lcd.print(mqttClient.connected() ? "OK" : "ERR");
+        lcd.setCursor(0, 1);
+        lcd.print("WiFi: ");
+        lcd.print(WiFi.status() == WL_CONNECTED ? "OK" : "ERR");
+        break;
     }
   }
 }
 
-void requestEnvironmentalData() {
-  if (environmentNodeId != 0) {
-    StaticJsonDocument<100> doc;
-    doc["type"] = "REQUEST_ENV_DATA";
-    doc["from"] = mesh.getNodeId();
-    
-    String message;
-    serializeJson(doc, message);
-    
-    mesh.sendSingle(environmentNodeId, message);
-    Serial.println("Requested environmental data");
-  }
-}
 
-void requestBiometricData() {
-  if (wearableNodeId != 0) {
-    StaticJsonDocument<100> doc;
-    doc["type"] = "REQUEST_BIO_DATA";
-    doc["from"] = mesh.getNodeId();
-    
-    String message;
-    serializeJson(doc, message);
-    
-    mesh.sendSingle(wearableNodeId, message);
-    Serial.println("Requested biometric data");
-  }
-}
 
-// Mesh callbacks
-void receivedCallback(uint32_t from, String &msg) {
-  Serial.printf("Received from %u: %s\n", from, msg.c_str());
-  
-  StaticJsonDocument<400> doc;
-  deserializeJson(doc, msg);
-  
-  String msgType = doc["type"];
-  
-  if (msgType == "ENVIRONMENTAL_DATA") {
-    // Update environmental data
-    envData.temperature = doc["temperature"];
-    envData.humidity = doc["humidity"];
-    envData.lightLevel = doc["lightLevel"];
-    envData.noiseLevel = doc["noiseLevel"];
-    envData.soundDetected = doc["soundDetected"];
-    envData.lastUpdate = millis();
-    envData.dataAvailable = true;
-    
-    Serial.println("Environmental data updated");
-    
-    // Analyze environment and provide feedback
-    analyzeEnvironment();
-    
-  } else if (msgType == "BIOMETRIC_DATA") {
-    // Update biometric data
-    bioData.heartRate = doc["heartRate"];
-    bioData.activity = doc["activity"].as<String>();  // Fix: explicit conversion
-    bioData.stepCount = doc["stepCount"];
-    bioData.acceleration = doc["acceleration"];
-    bioData.lastMovement = doc["lastMovement"];
-    bioData.lastUpdate = millis();
-    bioData.dataAvailable = true;
-    
-    Serial.println("Biometric data updated");
-    
-    // Analyze biometric data
-    analyzeBiometrics();
-    
-  } else if (msgType == "NODE_IDENTIFICATION") {
-    String nodeType = doc["nodeType"];
-    if (nodeType == "ENVIRONMENT") {
-      environmentNodeId = from;
-      Serial.printf("Environment node identified: %u\n", from);
-    } else if (nodeType == "WEARABLE") {
-      wearableNodeId = from;
-      Serial.printf("Wearable node identified: %u\n", from);
-    }
-  }
-}
 
-void newConnectionCallback(uint32_t nodeId) {
-  Serial.printf("New Connection: %u\n", nodeId);
-}
-
-void changedConnectionCallback() {
-  Serial.printf("Changed connections. Nodes: %d\n", mesh.getNodeList().size());
-}
 
 void analyzeEnvironment() {
   // Simple environmental analysis
@@ -450,14 +397,38 @@ void analyzeBiometrics() {
       digitalWrite(LED_PIN, HIGH);
       delay(100);
     }
+    
+    // Send MQTT movement reminder
+    publishMovementReminder();
+    
     Serial.println("Biometric Alert: Time to move!");
   }
   
   // Check heart rate
   if (bioData.heartRate > 100 && sessionActive) {
     Serial.println("Biometric Alert: High heart rate - take a break");
+    
+    // Publish health alert
+    StaticJsonDocument<200> alertDoc;
+    alertDoc["alert"] = "High heart rate detected";
+    alertDoc["heartRate"] = bioData.heartRate;
+    alertDoc["level"] = "warning";
+    alertDoc["timestamp"] = millis();
+    
+    String alertString;
+    serializeJson(alertDoc, alertString);
+    mqttClient.publish("bille/alerts/health", alertString.c_str());
   }
 }
+
+ // Show welcome screen
+  void showWelcomeScreen() {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Bill-E Focus Bot");
+    lcd.setCursor(0, 1);
+    lcd.print("Scan RFID card");
+  }
 
 void playSessionStartSound() {
   // Cheerful ascending tone for successful login
@@ -526,7 +497,7 @@ void initializePomodoro() {
   pomodoro.breakComplianceChecked = false;
   
   playWorkSessionStartSound();
-  broadcastPomodoroState();
+  publishPomodoroState();
   
   Serial.println("Pomodoro work session started!");
 }
@@ -584,7 +555,7 @@ void transitionToNextState() {
   pomodoro.snoozeCount = 0;
   pomodoro.breakComplianceChecked = false;
   
-  broadcastPomodoroState();
+  publishPomodoroState();
 }
 
 void snoozeBreak() {
@@ -599,9 +570,10 @@ void snoozeBreak() {
     noTone(BUZZER_PIN);
     
     Serial.printf("Break snoozed for 5 minutes. Snooze count: %d\n", pomodoro.snoozeCount);
-    broadcastPomodoroState();
+    publishPomodoroState();
   }
 }
+
 
 void checkBreakCompliance() {
   if (!bioData.dataAvailable) return;
@@ -619,45 +591,12 @@ void checkBreakCompliance() {
     
     String message;
     serializeJson(reminderMsg, message);
-    mesh.sendBroadcast(message);
   }
   
   pomodoro.breakComplianceChecked = true;
 }
 
-void broadcastPomodoroState() {
-  StaticJsonDocument<300> doc;
-  doc["type"] = "POMODORO_STATE";
-  doc["state"] = pomodoro.currentState;
-  doc["timeRemaining"] = (pomodoro.stateDuration - (millis() - pomodoro.stateStartTime)) / 1000;
-  doc["completedCycles"] = pomodoro.completedCycles;
-  doc["snoozed"] = pomodoro.breakSnoozed;
-  doc["snoozeCount"] = pomodoro.snoozeCount;
-  
-  String stateText;
-  switch (pomodoro.currentState) {
-    case WORK_SESSION: stateText = "WORK"; break;
-    case SHORT_BREAK: stateText = "SHORT_BREAK"; break;
-    case LONG_BREAK: stateText = "LONG_BREAK"; break;
-    default: stateText = "IDLE"; break;
-  }
-  doc["stateText"] = stateText;
-  
-  String message;
-  serializeJson(doc, message);
-  mesh.sendBroadcast(message);
-  
-  Serial.println("Pomodoro state broadcasted: " + stateText);
-}
 
-String getPomodoroStateText() {
-  switch (pomodoro.currentState) {
-    case WORK_SESSION: return "WORK";
-    case SHORT_BREAK: return "BREAK";
-    case LONG_BREAK: return "LONG BREAK";
-    default: return "IDLE";
-  }
-}
 
 String getTimeRemainingText() {
   if (pomodoro.currentState == IDLE) return "00:00";
@@ -670,4 +609,314 @@ String getTimeRemainingText() {
   int seconds = remaining % 60;
   
   return String(minutes) + ":" + (seconds < 10 ? "0" : "") + String(seconds);
+}
+
+unsigned long getTimeRemainingSeconds() {
+  if (pomodoro.currentState == IDLE) return 0;
+  
+  unsigned long elapsed = millis() - pomodoro.stateStartTime;
+  unsigned long remaining = (pomodoro.stateDuration > elapsed) ? 
+                            (pomodoro.stateDuration - elapsed) / 1000 : 0;
+  return remaining;
+}
+
+void publishMQTTMessage(const char* topic, String payload) {
+  if (mqttConnected && mqttClient.connected()) {
+    mqttClient.publish(topic, payload.c_str());
+    Serial.println("Published to " + String(topic) + ": " + payload);
+  }
+}
+
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(WIFI_SSID);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  randomSeed(micros());
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void reconnect_mqtt() {
+  while (!mqttClient.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    
+    // Create a random client ID
+    String clientId = "BillE-MainBrain-";
+    clientId += String(random(0xffff), HEX);
+    
+    if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
+      Serial.println("connected");
+      
+      // Subscribe to data topics from other nodes
+      mqttClient.subscribe("bille/data/environment");
+      mqttClient.subscribe("bille/data/biometric");
+      mqttClient.subscribe("bille/commands/session");
+      mqttClient.subscribe("bille/commands/pomodoro");
+      
+      // Announce presence as main coordinator
+      mqttClient.publish("bille/status/mainbrain", "online", true);
+      
+      // Request initial data from all nodes
+      mqttClient.publish("bille/environment/request", "data");
+      mqttClient.publish("bille/wearable/request", "data");
+      
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.println(message);
+  
+  StaticJsonDocument<400> doc;
+  deserializeJson(doc, message);
+  
+  // Handle environmental data updates
+  if (String(topic) == "bille/data/environment") {
+    envData.temperature = doc["temperature"];
+    envData.humidity = doc["humidity"];
+    envData.lightLevel = doc["lightLevel"];
+    envData.noiseLevel = doc["noiseLevel"];
+    envData.soundDetected = doc["soundDetected"];
+    envData.lastUpdate = millis();
+    envData.dataAvailable = true;
+    
+    Serial.println("Environmental data updated via MQTT");
+    analyzeEnvironment();
+  }
+  
+  // Handle biometric data updates
+  else if (String(topic) == "bille/data/biometric") {
+    bioData.heartRate = doc["heartRate"];
+    bioData.activity = doc["activity"].as<String>();
+    bioData.stepCount = doc["stepCount"];
+    bioData.acceleration = doc["acceleration"];
+    bioData.lastMovement = doc["lastMovement"];
+    bioData.lastUpdate = millis();
+    bioData.dataAvailable = true;
+    
+    Serial.println("Biometric data updated via MQTT");
+    analyzeBiometrics();
+  }
+  
+  // Handle remote session commands (for web dashboard control)
+  else if (String(topic) == "bille/commands/session") {
+    String command = doc["command"];
+    if (command == "start" && !sessionActive) {
+      String userId = doc["userId"].as<String>();
+      startSession(userId);
+    } else if (command == "stop" && sessionActive) {
+      endSession();
+    }
+  }
+  
+  // Handle remote Pomodoro commands
+  else if (String(topic) == "bille/commands/pomodoro") {
+    String command = doc["command"];
+    if (command == "snooze" && sessionActive) {
+      snoozeBreak();
+    } else if (command == "skip" && sessionActive) {
+      transitionToNextState();
+    }
+  }
+}
+
+void publishSessionState() {
+  StaticJsonDocument<200> doc;
+  doc["active"] = sessionActive;
+  doc["userId"] = currentUser;
+  doc["timestamp"] = millis();
+  
+  if (sessionActive) {
+    unsigned long elapsed = (millis() - sessionStart) / 1000;
+    doc["sessionDuration"] = elapsed;
+  }
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  mqttClient.publish("bille/session/state", jsonString.c_str());
+  mqttClient.publish("bille/session/active", sessionActive ? "true" : "false");
+  
+  Serial.println("Session state published to MQTT");
+}
+
+void publishPomodoroState() {
+  StaticJsonDocument<300> doc;
+  doc["state"] = pomodoro.currentState;
+  doc["timeRemaining"] = (pomodoro.stateDuration - (millis() - pomodoro.stateStartTime)) / 1000;
+  doc["completedCycles"] = pomodoro.completedCycles;
+  doc["snoozed"] = pomodoro.breakSnoozed;
+  doc["snoozeCount"] = pomodoro.snoozeCount;
+  doc["timestamp"] = millis();
+  
+  String stateText;
+  switch (pomodoro.currentState) {
+    case WORK_SESSION: stateText = "WORK"; break;
+    case SHORT_BREAK: stateText = "SHORT_BREAK"; break;
+    case LONG_BREAK: stateText = "LONG_BREAK"; break;
+    default: stateText = "IDLE"; break;
+  }
+  doc["stateText"] = stateText;
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  // Publish to multiple topics for HA sensors
+  mqttClient.publish("bille/pomodoro/state", jsonString.c_str());
+  mqttClient.publish("bille/pomodoro/cycles", String(pomodoro.completedCycles).c_str());
+  mqttClient.publish("bille/pomodoro/time_remaining", String(doc["timeRemaining"].as<long>()).c_str());
+  mqttClient.publish("bille/pomodoro/current_state", stateText.c_str());
+  
+  Serial.println("Pomodoro state published: " + stateText);
+}
+
+void publishSystemStatus() {
+  StaticJsonDocument<300> doc;
+  doc["nodeType"] = "MAIN_BRAIN";
+  doc["timestamp"] = millis();
+  doc["sessionActive"] = sessionActive;
+  doc["currentUser"] = currentUser;
+  doc["wifiConnected"] = WiFi.status() == WL_CONNECTED;
+  doc["mqttConnected"] = mqttClient.connected();
+  doc["environmentDataAge"] = envData.dataAvailable ? (millis() - envData.lastUpdate) / 1000 : -1;
+  doc["biometricDataAge"] = bioData.dataAvailable ? (millis() - bioData.lastUpdate) / 1000 : -1;
+  
+  if (sessionActive) {
+    doc["pomodoroState"] = pomodoro.currentState;
+    doc["pomodoroTimeRemaining"] = (pomodoro.stateDuration - (millis() - pomodoro.stateStartTime)) / 1000;
+    doc["completedCycles"] = pomodoro.completedCycles;
+  }
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  mqttClient.publish("bille/status/system", jsonString.c_str());
+  
+  Serial.println("System status published to MQTT");
+}
+
+void publishMovementReminder() {
+  StaticJsonDocument<150> doc;
+  doc["message"] = "Time to move around!";
+  doc["timestamp"] = millis();
+  doc["reason"] = "extended_sitting";
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  mqttClient.publish("bille/alerts/movement", jsonString.c_str());
+  
+  Serial.println("Movement reminder sent via MQTT");
+}
+
+
+void connectMQTT() {
+  while (!mqttClient.connected() && WiFi.status() == WL_CONNECTED) {
+    Serial.print("Attempting MQTT connection...");
+    
+    String clientId = "BillE-MainBrain-";
+    clientId += String(random(0xffff), HEX);
+    
+    if (mqttClient.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD)) {
+      Serial.println("connected");
+      mqttConnected = true;
+      
+      // Subscribe to command topics
+      mqttClient.subscribe("bille/commands/snooze");
+      mqttClient.subscribe("bille/commands/end_session");
+      
+      // Announce connection
+      publishMQTTMessage("bille/status", "Main Brain Connected");
+      
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+void publishSensorData() {
+  if (!mqttConnected || !mqttClient.connected()) return;
+  
+  // Create comprehensive sensor data JSON
+  StaticJsonDocument<600> doc;
+  doc["timestamp"] = millis();
+  
+  
+  // Environmental data
+  if (envData.dataAvailable) {
+    doc["temperature"] = envData.temperature;
+    doc["humidity"] = envData.humidity;
+    doc["light_level"] = envData.lightLevel;
+    doc["noise_level"] = envData.noiseLevel;
+    doc["sound_detected"] = envData.soundDetected;
+    
+    // Publish individual topics for HA sensors
+    publishMQTTMessage(TOPIC_TEMPERATURE, String(envData.temperature));
+    publishMQTTMessage(TOPIC_HUMIDITY, String(envData.humidity));
+    publishMQTTMessage(TOPIC_LIGHT, String(envData.lightLevel));
+    publishMQTTMessage(TOPIC_NOISE, String(envData.noiseLevel));
+  }
+  
+  // Biometric data
+  if (bioData.dataAvailable) {
+    doc["heart_rate"] = bioData.heartRate;
+    doc["step_count"] = bioData.stepCount;
+    doc["activity"] = bioData.activity;
+    doc["acceleration"] = bioData.acceleration;
+    doc["last_movement"] = bioData.lastMovement;
+    
+    // Publish individual topics
+    publishMQTTMessage(TOPIC_HEARTRATE, String(bioData.heartRate));
+    publishMQTTMessage(TOPIC_STEPS, String(bioData.stepCount));
+    publishMQTTMessage(TOPIC_ACTIVITY, bioData.activity);
+  }
+  
+  // Pomodoro data
+  doc["session_active"] = sessionActive;
+  if (sessionActive) {
+    doc["current_user"] = currentUser;
+    doc["pomodoro_state"] = pomodoro.currentState;
+    doc["pomodoro_cycles"] = pomodoro.completedCycles;
+    doc["time_remaining"] = getTimeRemainingSeconds();
+    
+    // Publish Pomodoro topics
+    publishMQTTMessage(TOPIC_SESSION_ACTIVE, sessionActive ? "true" : "false");
+    publishMQTTMessage(TOPIC_SESSION_USER, currentUser);
+    publishMQTTMessage(TOPIC_POMODORO_STATE, String(pomodoro.currentState));
+    publishMQTTMessage(TOPIC_POMODORO_CYCLES, String(pomodoro.completedCycles));
+    publishMQTTMessage(TOPIC_POMODORO_TIME, String(getTimeRemainingSeconds()));
+  }
+  
+  // Publish complete data as JSON
+  String jsonString;
+  serializeJson(doc, jsonString);
+  publishMQTTMessage("bille/data/complete", jsonString);
+  
+  Serial.println("Sensor data published to MQTT");
 }
