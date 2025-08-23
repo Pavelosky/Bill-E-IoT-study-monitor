@@ -1,13 +1,11 @@
-#include "sensors.h"
+#include "data_analysis.h"
 #include "config.h"
+#include "data_structures.h"
+#include "mqtt_handler.h"
+#include <Arduino.h>
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 
-// Global instances
-EnvironmentData envData;
-BiometricData bioData;
-
-extern bool sessionActive;
 extern PubSubClient mqttClient;
 
 void analyzeEnvironment() {
@@ -47,19 +45,6 @@ void analyzeEnvironment() {
     
     Serial.println("Environment Alert: " + alertMsg);
   }
-}
-
-void publishMovementReminder() {
-  StaticJsonDocument<150> doc;
-  doc["message"] = "Time to move around!";
-  doc["timestamp"] = millis();
-  doc["reason"] = "extended_sitting";
-  
-  String jsonString;
-  serializeJson(doc, jsonString);
-  mqttClient.publish("bille/alerts/movement", jsonString.c_str());
-  
-  Serial.println("Movement reminder sent via MQTT");
 }
 
 void analyzeBiometrics() {

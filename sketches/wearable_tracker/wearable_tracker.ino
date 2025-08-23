@@ -1,41 +1,77 @@
-// ESP8266-3 Wearable Tracker - Refactored with Modular Design
-#include "config.h"
-#include "sensors.h"
-#include "heart_rate.h"
-#include "activity_tracker.h"
-#include "display_manager.h"
-#include "mqtt_manager.h"
-#include "session_manager.h"
-
+// ESP8266-3 Wearable Tracker with Mesh Network
+#include <U8g2lib.h>
+#include <Wire.h>
+#include <MPU6050.h>
 #include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
+// Include our modules
+#include "config.h"
+#include "biometric_data.h"
+#include "biometric_sensors.h"
+#include "display_oled.h"
+#include "mqtt_communication.h"
+#include "health_monitor.h"
+
+// Objects
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C display(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+MPU6050 mpu;
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// Biometric data instance
+BiometricData currentBio;
+PomodoroInfo pomodoroInfo;
+
+// Activity detection variables
+float lastAccelMagnitude = 0;
+int stepCount = 0;
+unsigned long lastStepTime = 0;
+
+// Session state
+bool sessionActive = false;
+String currentUser = "";
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("Bill-E Wearable Tracker with MQTT Starting...");
+ Serial.println("Bill-E Wearable Tracker with MQTT Starting...");
   
-  // Initialize heart rate monitoring
-  initializeHeartRate();
+  // Initialize pins
+  pinMode(HEART_LED, OUTPUT);
+  digitalWrite(HEART_LED, LOW);
   
-  // Initialize display (this also sets up I2C)
-  initializeDisplay();
+  // Initialize I2C
+  Wire.begin(OLED_SDA, OLED_SCL);
   
-  // Initialize activity tracker
-  if (!initializeActivityTracker()) {
-    showError("MPU6050 Error");
+  // Initialize OLED display
+  display.begin();
+  display.enableUTF8Print();
+  
+  // Initialize MPU6050
+  Serial.println("Initializing MPU6050...");
+  mpu.initialize();
+  
+  // Test gyro connection
+  if (mpu.testConnection()) {
+    Serial.println("MPU6050 connection successful");
+  } else {
+    Serial.println("MPU6050 connection failed");
+    display.clearBuffer();
+    display.setFont(u8g2_font_6x10_tf);
+    display.setCursor(0, 20);
+    display.print("ERROR:");
+    display.setCursor(0, 40);
+    display.print("MPU6050 Error");
+    display.sendBuffer();
     while (1) delay(10);
   }
   
-  // Initialize session
-  initializeSession();
-  
   // Setup WiFi and MQTT
-  setupWiFi();
+  setup_wifi();
   client.setServer(MQTT_SERVER, MQTT_PORT);
-  client.setCallback(mqttCallback);
+  client.setCallback(mqtt_callback);
   
   // Welcome screen
   showWelcomeScreen();
@@ -47,14 +83,15 @@ void setup() {
 }
 
 void loop() {
+  
   if (!client.connected()) {
-    reconnectMQTT();
+    reconnect_mqtt();
   }
   client.loop();
   
   // Read sensors every 5 seconds
   static unsigned long lastRead = 0;
-  if (millis() - lastRead > SENSOR_READ_INTERVAL) {
+  if (millis() - lastRead > 5000) {
     readBiometrics();
     publishBiometricData();
     lastRead = millis();
@@ -62,7 +99,7 @@ void loop() {
   
   // Check for health alerts every 30 seconds
   static unsigned long lastHealthCheck = 0;
-  if (millis() - lastHealthCheck > HEALTH_CHECK_INTERVAL) {
+  if (millis() - lastHealthCheck > 30000) {
     publishHealthAlerts();
     lastHealthCheck = millis();
   }

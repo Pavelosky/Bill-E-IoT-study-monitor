@@ -1,19 +1,17 @@
-#include "mqtt_manager.h"
+#include "mqtt_communication.h"
 #include "config.h"
-#include "sensors.h"
-#include "display_manager.h"
-#include "activity_tracker.h"
+#include "biometric_data.h"
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <U8g2lib.h>
 
-// Global objects
-WiFiClient espClient;
-PubSubClient client(espClient);
+extern PubSubClient client;
+extern BiometricData currentBio;
+extern PomodoroInfo pomodoroInfo;
+extern U8G2_SSD1306_128X64_NONAME_F_HW_I2C display;
 
-// External variables
-extern bool sessionActive;
-extern String currentUser;
-
-void setupWiFi() {
+void setup_wifi() {
   delay(10);
   Serial.println();
   Serial.print("Connecting to ");
@@ -34,7 +32,7 @@ void setupWiFi() {
   Serial.println(WiFi.localIP());
 }
 
-void reconnectMQTT() {
+void reconnect_mqtt() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     
@@ -46,13 +44,13 @@ void reconnectMQTT() {
       Serial.println("connected");
       
       // Subscribe to control topics
-      client.subscribe(TOPIC_SESSION_STATE);
-      client.subscribe(TOPIC_POMODORO_STATE);
-      client.subscribe(TOPIC_WEARABLE_REQUEST);
-      client.subscribe(TOPIC_MOVEMENT_ALERT);
+      client.subscribe("bille/session/state");
+      client.subscribe("bille/pomodoro/state");
+      client.subscribe("bille/wearable/request");
+      client.subscribe("bille/alerts/movement");
       
       // Announce presence
-      client.publish(TOPIC_WEARABLE_STATUS, "online", true);
+      client.publish("bille/status/wearable", "online", true);
       
     } else {
       Serial.print("failed, rc=");
@@ -63,7 +61,7 @@ void reconnectMQTT() {
   }
 }
 
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
@@ -78,13 +76,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   deserializeJson(doc, message);
   
   // Handle session state updates
-  if (String(topic) == TOPIC_SESSION_STATE) {
+  if (String(topic) == "bille/session/state") {
     sessionActive = doc["active"];
     currentUser = doc["userId"].as<String>();
     
     if (sessionActive) {
       // Reset step counter for new session
-      resetStepCount();
+      extern int stepCount;
+      stepCount = 0;
       
       // Show session start notification
       display.clearBuffer();
@@ -115,7 +114,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   
   // Handle Pomodoro state updates
-  else if (String(topic) == TOPIC_POMODORO_STATE) {
+  else if (String(topic) == "bille/pomodoro/state") {
     pomodoroInfo.currentState = (PomodoroState)doc["state"].as<int>();
     pomodoroInfo.timeRemaining = doc["timeRemaining"];
     pomodoroInfo.completedCycles = doc["completedCycles"];
@@ -129,7 +128,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   
   // Handle movement reminders
-  else if (String(topic) == TOPIC_MOVEMENT_ALERT) {
+  else if (String(topic) == "bille/alerts/movement") {
     String reminderMsg = doc["message"].as<String>();
     
     display.clearBuffer();
@@ -150,20 +149,20 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
   
   // Handle data requests
-  else if (String(topic) == TOPIC_WEARABLE_REQUEST) {
+  else if (String(topic) == "bille/wearable/request") {
     publishBiometricData();
   }
 }
 
 void publishBiometricData() {
   if (!client.connected()) {
-    reconnectMQTT();
+    reconnect_mqtt();
   }
   
   // Publish individual sensor values to HA
-  client.publish(TOPIC_HEARTRATE, String(currentBio.heartRate).c_str());
-  client.publish(TOPIC_STEPS, String(currentBio.stepCount).c_str());
-  client.publish(TOPIC_ACTIVITY, currentBio.activity.c_str());
+  client.publish("bille/sensors/heartrate", String(currentBio.heartRate).c_str());
+  client.publish("bille/sensors/steps", String(currentBio.stepCount).c_str());
+  client.publish("bille/sensors/activity", currentBio.activity.c_str());
   
   // Publish combined biometric data
   StaticJsonDocument<400> doc;
@@ -181,63 +180,12 @@ void publishBiometricData() {
   if (pomodoroInfo.dataAvailable) {
     doc["pomodoroState"] = pomodoroInfo.currentState;
     doc["pomodoroTimeRemaining"] = pomodoroInfo.timeRemaining;
-    doc["breakCompliant"] = (millis() - currentBio.lastMovement) < MOVEMENT_RECENT_TIME;
+    doc["breakCompliant"] = (millis() - currentBio.lastMovement) < 30000;
   }
   
   String jsonString;
   serializeJson(doc, jsonString);
-  client.publish(TOPIC_BIOMETRIC_DATA, jsonString.c_str());
+  client.publish("bille/data/biometric", jsonString.c_str());
   
   Serial.println("Biometric data published to MQTT");
-}
-
-void publishHealthAlerts() {
-  if (!sessionActive) return;
-  
-  StaticJsonDocument<300> alertDoc;
-  alertDoc["nodeType"] = "WEARABLE";
-  alertDoc["timestamp"] = millis();
-  alertDoc["userId"] = currentUser;
-  
-  bool hasAlert = false;
-  String alertMessage = "";
-  String alertLevel = "info";
-  
-  // Check for extended sitting during work sessions
-  unsigned long timeSinceMovement = millis() - currentBio.lastMovement;
-  
-  if (pomodoroInfo.currentState == WORK_SESSION && timeSinceMovement > EXTENDED_SITTING_TIME) {
-    alertMessage = "Consider taking a short movement break";
-    alertLevel = "warning";
-    hasAlert = true;
-  }
-  
-  // Check heart rate during work
-  if (pomodoroInfo.currentState == WORK_SESSION && currentBio.heartRate > ELEVATED_HEART_RATE) {
-    alertMessage = "Heart rate elevated - consider relaxing";
-    alertLevel = "warning";
-    hasAlert = true;
-  }
-  
-  // Check break compliance
-  if ((pomodoroInfo.currentState == SHORT_BREAK || pomodoroInfo.currentState == LONG_BREAK) 
-      && timeSinceMovement > BREAK_COMPLIANCE_TIME) {
-    alertMessage = "Break time - time to move around!";
-    alertLevel = "info";
-    hasAlert = true;
-  }
-  
-  if (hasAlert) {
-    alertDoc["alert"] = alertMessage;
-    alertDoc["level"] = alertLevel;
-    alertDoc["heartRate"] = currentBio.heartRate;
-    alertDoc["timeSinceMovement"] = timeSinceMovement / 1000; // seconds
-    alertDoc["pomodoroState"] = pomodoroInfo.currentState;
-    
-    String alertString;
-    serializeJson(alertDoc, alertString);
-    client.publish(TOPIC_HEALTH_ALERT, alertString.c_str());
-    
-    Serial.println("Health alert: " + alertMessage);
-  }
 }

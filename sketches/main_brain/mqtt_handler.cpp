@@ -1,26 +1,16 @@
-#include "mqtt_manager.h"
+#include "mqtt_handler.h"
 #include "config.h"
-#include "sensors.h"
-#include "pomodoro.h"
+#include "data_structures.h"
+#include "pomodoro_timer.h"
+#include "data_analysis.h"
+#include "rfid_manager.h"
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
 #include <ArduinoJson.h>
 
-// Global objects
-WiFiClient espClient;
-PubSubClient mqttClient(espClient);
-bool mqttConnected = false;
+extern PubSubClient mqttClient;
 
-// External variables
-extern bool sessionActive;
-extern String currentUser;
-extern unsigned long sessionStart;
-
-// External functions
-void startSession(String userId);
-void endSession();
-void snoozeBreak();
-void transitionToNextState();
-
-void setupWiFi() {
+void setup_wifi() {
   delay(10);
   Serial.println();
   Serial.print("Connecting to ");
@@ -41,7 +31,7 @@ void setupWiFi() {
   Serial.println(WiFi.localIP());
 }
 
-void reconnectMQTT() {
+void reconnect_mqtt() {
   while (!mqttClient.connected()) {
     Serial.print("Attempting MQTT connection...");
     
@@ -74,7 +64,7 @@ void reconnectMQTT() {
   }
 }
 
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
@@ -158,6 +148,36 @@ void publishSessionState() {
   Serial.println("Session state published to MQTT");
 }
 
+void publishPomodoroState() {
+  StaticJsonDocument<300> doc;
+  doc["state"] = pomodoro.currentState;
+  doc["timeRemaining"] = (pomodoro.stateDuration - (millis() - pomodoro.stateStartTime)) / 1000;
+  doc["completedCycles"] = pomodoro.completedCycles;
+  doc["snoozed"] = pomodoro.breakSnoozed;
+  doc["snoozeCount"] = pomodoro.snoozeCount;
+  doc["timestamp"] = millis();
+  
+  String stateText;
+  switch (pomodoro.currentState) {
+    case WORK_SESSION: stateText = "WORK"; break;
+    case SHORT_BREAK: stateText = "SHORT_BREAK"; break;
+    case LONG_BREAK: stateText = "LONG_BREAK"; break;
+    default: stateText = "IDLE"; break;
+  }
+  doc["stateText"] = stateText;
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  // Publish to multiple topics for HA sensors
+  mqttClient.publish("bille/pomodoro/state", jsonString.c_str());
+  mqttClient.publish("bille/pomodoro/cycles", String(pomodoro.completedCycles).c_str());
+  mqttClient.publish("bille/pomodoro/time_remaining", String(doc["timeRemaining"].as<long>()).c_str());
+  mqttClient.publish("bille/pomodoro/current_state", stateText.c_str());
+  
+  Serial.println("Pomodoro state published: " + stateText);
+}
+
 void publishSystemStatus() {
   StaticJsonDocument<300> doc;
   doc["nodeType"] = "MAIN_BRAIN";
@@ -182,70 +202,15 @@ void publishSystemStatus() {
   Serial.println("System status published to MQTT");
 }
 
-void publishMQTTMessage(const char* topic, String payload) {
-  if (mqttConnected && mqttClient.connected()) {
-    mqttClient.publish(topic, payload.c_str());
-    Serial.println("Published to " + String(topic) + ": " + payload);
-  }
-}
-
-void publishSensorData() {
-  if (!mqttConnected || !mqttClient.connected()) return;
-  
-  // Create comprehensive sensor data JSON
-  StaticJsonDocument<600> doc;
+void publishMovementReminder() {
+  StaticJsonDocument<150> doc;
+  doc["message"] = "Time to move around!";
   doc["timestamp"] = millis();
+  doc["reason"] = "extended_sitting";
   
-  
-  // Environmental data
-  if (envData.dataAvailable) {
-    doc["temperature"] = envData.temperature;
-    doc["humidity"] = envData.humidity;
-    doc["light_level"] = envData.lightLevel;
-    doc["noise_level"] = envData.noiseLevel;
-    doc["sound_detected"] = envData.soundDetected;
-    
-    // Publish individual topics for HA sensors
-    publishMQTTMessage(TOPIC_TEMPERATURE, String(envData.temperature));
-    publishMQTTMessage(TOPIC_HUMIDITY, String(envData.humidity));
-    publishMQTTMessage(TOPIC_LIGHT, String(envData.lightLevel));
-    publishMQTTMessage(TOPIC_NOISE, String(envData.noiseLevel));
-  }
-  
-  // Biometric data
-  if (bioData.dataAvailable) {
-    doc["heart_rate"] = bioData.heartRate;
-    doc["step_count"] = bioData.stepCount;
-    doc["activity"] = bioData.activity;
-    doc["acceleration"] = bioData.acceleration;
-    doc["last_movement"] = bioData.lastMovement;
-    
-    // Publish individual topics
-    publishMQTTMessage(TOPIC_HEARTRATE, String(bioData.heartRate));
-    publishMQTTMessage(TOPIC_STEPS, String(bioData.stepCount));
-    publishMQTTMessage(TOPIC_ACTIVITY, bioData.activity);
-  }
-  
-  // Pomodoro data
-  doc["session_active"] = sessionActive;
-  if (sessionActive) {
-    doc["current_user"] = currentUser;
-    doc["pomodoro_state"] = pomodoro.currentState;
-    doc["pomodoro_cycles"] = pomodoro.completedCycles;
-    doc["time_remaining"] = getTimeRemainingSeconds();
-    
-    // Publish Pomodoro topics
-    publishMQTTMessage(TOPIC_SESSION_ACTIVE, sessionActive ? "true" : "false");
-    publishMQTTMessage(TOPIC_SESSION_USER, currentUser);
-    publishMQTTMessage(TOPIC_POMODORO_STATE, String(pomodoro.currentState));
-    publishMQTTMessage(TOPIC_POMODORO_CYCLES, String(pomodoro.completedCycles));
-    publishMQTTMessage(TOPIC_POMODORO_TIME, String(getTimeRemainingSeconds()));
-  }
-  
-  // Publish complete data as JSON
   String jsonString;
   serializeJson(doc, jsonString);
-  publishMQTTMessage("bille/data/complete", jsonString);
+  mqttClient.publish("bille/alerts/movement", jsonString.c_str());
   
-  Serial.println("Sensor data published to MQTT");
+  Serial.println("Movement reminder sent via MQTT");
 }

@@ -1,24 +1,13 @@
-#include "display_manager.h"
-#include "config.h"
-#include "sensors.h"
+#include "display_oled.h"
+#include "biometric_data.h"
+#include <U8g2lib.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
-#include <Wire.h>
 
-// Global display object
-U8G2_SSD1306_128X64_NONAME_F_HW_I2C display(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
-
-extern bool sessionActive;
+extern U8G2_SSD1306_128X64_NONAME_F_HW_I2C display;
+extern BiometricData currentBio;
+extern PomodoroInfo pomodoroInfo;
 extern PubSubClient client;
-
-void initializeDisplay() {
-  // Initialize I2C for both display and sensors
-  Wire.begin(OLED_SDA, OLED_SCL);
-  
-  // Initialize OLED display
-  display.begin();
-  display.enableUTF8Print();
-}
 
 void updateDisplay() {
   static unsigned long lastDisplayUpdate = 0;
@@ -31,9 +20,9 @@ void updateDisplay() {
   }
 
   // Main display rotation every 4 seconds
-  if (millis() - lastDisplayUpdate > DISPLAY_UPDATE_INTERVAL) {
+  if (millis() - lastDisplayUpdate > 4000) {
     // Adjust display mode count based on session state
-    int maxModes = sessionActive ? MAX_ACTIVE_MODES : MAX_INACTIVE_MODES;
+    int maxModes = sessionActive ? 4 : 3; // More modes during active session
     displayMode = (displayMode + 1) % maxModes;
     lastDisplayUpdate = millis();
   }
@@ -65,6 +54,7 @@ void updateDisplay() {
         // MQTT and connection status
         showMQTTStatus();
         break;
+
     }
   } else {
     // Original display modes when not in active session
@@ -125,6 +115,7 @@ void showWelcomeScreen() {
   display.sendBuffer();
 }
 
+// TODO: For debugging - MQTT status to be removed
 void showMQTTStatus() {
   display.clearBuffer();
   display.setFont(u8g2_font_6x10_tf);
@@ -141,16 +132,6 @@ void showMQTTStatus() {
   display.print("IP: ");
   display.print(WiFi.localIP().toString().substring(10)); // Show last part of IP
   
-  display.sendBuffer();
-}
-
-void showError(String error) {
-  display.clearBuffer();
-  display.setFont(u8g2_font_6x10_tf);
-  display.setCursor(0, 20);
-  display.print("ERROR:");
-  display.setCursor(0, 40);
-  display.print(error);
   display.sendBuffer();
 }
 
@@ -203,7 +184,7 @@ void showBreakCompliance() {
   display.clearBuffer();
   display.setFont(u8g2_font_8x13_tf);
   
-  if (timeSinceMovement < MOVEMENT_RECENT_TIME) { // Moved recently
+  if (timeSinceMovement < 30000) { // Moved recently
     display.setCursor(0, 20);
     display.print("Great!");
     display.setCursor(0, 40);

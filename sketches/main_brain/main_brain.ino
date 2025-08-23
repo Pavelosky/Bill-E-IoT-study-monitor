@@ -1,15 +1,40 @@
-// ESP8266-1 Main Brain - Refactored with Modular Design
-#include "config.h"
-#include "sensors.h"
-#include "sound_effects.h"
-#include "pomodoro.h"
-#include "display_manager.h"
-#include "rfid_handler.h"
-#include "mqtt_manager.h"
-#include "session_manager.h"
-
+// ESP8266-1 Main Brain with Mesh Network
+#include <MFRC522.h>
+#include <LiquidCrystal_I2C.h>
+#include <SPI.h>
+#include <Wire.h>
 #include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+
+// Include our modules
+#include "config.h"
+#include "data_structures.h"
+#include "rfid_manager.h"
+#include "pomodoro_timer.h"
+#include "display_manager.h"
+#include "audio_system.h"
+#include "mqtt_handler.h"
+#include "data_analysis.h"
+
+// Objects
+MFRC522 rfid(SS_PIN, RST_PIN);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+
+// MQTT state
+bool mqttConnected = false;
+
+// Session state - defined here, declared in data_structures.h
+bool sessionActive = false;
+String currentUser = "";
+unsigned long sessionStart = 0;
+
+// Global data instances - defined here, declared in data_structures.h
+PomodoroSession pomodoro;
+EnvironmentData envData;
+BiometricData bioData;
 
 void setup() {
   Serial.begin(115200);
@@ -21,16 +46,32 @@ void setup() {
   pinMode(BUZZER_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
   
-  // Initialize display
-  initializeDisplay();
+  // Initialize I2C for LCD
+  Wire.begin(D3, D4);
   
-  // Initialize RFID
-  initializeRFID();
+  // Initialize LCD
+  lcd.init();
+  lcd.backlight();
+
+  // Reset RFID properly
+  pinMode(RST_PIN, OUTPUT);
+  digitalWrite(RST_PIN, LOW);
+  delay(100);
+  digitalWrite(RST_PIN, HIGH);
+  delay(100);
+  
+  // Initialize SPI and RFID
+  SPI.begin();
+  rfid.PCD_Init();
+  
+  // Test RFID
+  byte version = rfid.PCD_ReadRegister(rfid.VersionReg);
+  Serial.printf("RFID Version: 0x%02X\n", version);
   
   // Setup WiFi and MQTT
-  setupWiFi();
+  setup_wifi();
   mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
-  mqttClient.setCallback(mqttCallback);
+  mqttClient.setCallback(mqtt_callback);
   
   showWelcomeScreen();
   
@@ -41,7 +82,7 @@ void setup() {
 
 void loop() {
   if (!mqttClient.connected()) {
-    reconnectMQTT();
+    reconnect_mqtt();
   }
   mqttClient.loop();
   
@@ -51,18 +92,17 @@ void loop() {
   
   // Publish system status every 30 seconds
   static unsigned long lastStatusUpdate = 0;
-  if (millis() - lastStatusUpdate > SYSTEM_STATUS_INTERVAL) {
+  if (millis() - lastStatusUpdate > 30000) {
     publishSystemStatus();
     lastStatusUpdate = millis();
   }
   
   // Publish Pomodoro state every 10 seconds during active session
   static unsigned long lastPomodoroUpdate = 0;
-  if (sessionActive && millis() - lastPomodoroUpdate > POMODORO_UPDATE_INTERVAL) {
+  if (sessionActive && millis() - lastPomodoroUpdate > 10000) {
     publishPomodoroState();
     lastPomodoroUpdate = millis();
   }
   
-  delay(LOOP_DELAY);
+  delay(100);
 }
-

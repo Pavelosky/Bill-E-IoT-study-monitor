@@ -10,9 +10,9 @@
 #define MQTT_PASSWORD   "BillE2025_Secure!" 
 
 // Pin definitions
-#define OLED_SDA        D2
-#define OLED_SCL        D1
-#define HEART_SENSOR    A0
-#define HEART_LED       D5
+#define DHT_PIN         D6
+#define DHT_TYPE        DHT11
+#define ANALOG_PIN      A0
+#define SOUND_DIGITAL   D5
 
 #endif

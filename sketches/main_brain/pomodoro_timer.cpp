@@ -1,16 +1,10 @@
-#include "pomodoro.h"
-#include "sound_effects.h"
-#include "sensors.h"
-#include <ArduinoJson.h>
-#include <PubSubClient.h>
+#include "pomodoro_timer.h"
+#include "data_structures.h"
+#include "audio_system.h"
+#include "mqtt_handler.h"
+#include "config.h"
+#include <Arduino.h>
 
-// Global instance
-PomodoroSession pomodoro;
-
-extern bool sessionActive;
-extern PubSubClient mqttClient;
-
-void publishPomodoroState();
 
 void initializePomodoro() {
   pomodoro.currentState = WORK_SESSION;
@@ -89,7 +83,10 @@ void snoozeBreak() {
     pomodoro.snoozeCount++;
     pomodoro.breakSnoozed = true;
     
-    playSnoozeAcknowledgment();
+    // Brief acknowledgment sound
+    tone(BUZZER_PIN, 440, 200);
+    delay(300);
+    noTone(BUZZER_PIN);
     
     Serial.printf("Break snoozed for 5 minutes. Snooze count: %d\n", pomodoro.snoozeCount);
     publishPomodoroState();
@@ -106,12 +103,7 @@ void checkBreakCompliance() {
   } else {
     Serial.println("Break compliance: Consider moving around!");
     // Send gentle reminder to mesh
-    StaticJsonDocument<150> reminderMsg;
-    reminderMsg["type"] = "MOVEMENT_REMINDER";
-    reminderMsg["message"] = "Time to move around!";
-    
-    String message;
-    serializeJson(reminderMsg, message);
+    // Note: Original code had mesh network functionality here
   }
   
   pomodoro.breakComplianceChecked = true;
@@ -137,34 +129,4 @@ unsigned long getTimeRemainingSeconds() {
   unsigned long remaining = (pomodoro.stateDuration > elapsed) ? 
                             (pomodoro.stateDuration - elapsed) / 1000 : 0;
   return remaining;
-}
-
-void publishPomodoroState() {
-  StaticJsonDocument<300> doc;
-  doc["state"] = pomodoro.currentState;
-  doc["timeRemaining"] = (pomodoro.stateDuration - (millis() - pomodoro.stateStartTime)) / 1000;
-  doc["completedCycles"] = pomodoro.completedCycles;
-  doc["snoozed"] = pomodoro.breakSnoozed;
-  doc["snoozeCount"] = pomodoro.snoozeCount;
-  doc["timestamp"] = millis();
-  
-  String stateText;
-  switch (pomodoro.currentState) {
-    case WORK_SESSION: stateText = "WORK"; break;
-    case SHORT_BREAK: stateText = "SHORT_BREAK"; break;
-    case LONG_BREAK: stateText = "LONG_BREAK"; break;
-    default: stateText = "IDLE"; break;
-  }
-  doc["stateText"] = stateText;
-  
-  String jsonString;
-  serializeJson(doc, jsonString);
-  
-  // Publish to multiple topics for HA sensors
-  mqttClient.publish("bille/pomodoro/state", jsonString.c_str());
-  mqttClient.publish("bille/pomodoro/cycles", String(pomodoro.completedCycles).c_str());
-  mqttClient.publish("bille/pomodoro/time_remaining", String(doc["timeRemaining"].as<long>()).c_str());
-  mqttClient.publish("bille/pomodoro/current_state", stateText.c_str());
-  
-  Serial.println("Pomodoro state published: " + stateText);
 }

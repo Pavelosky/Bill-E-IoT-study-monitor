@@ -1,15 +1,7 @@
-#ifndef SENSORS_H
-#define SENSORS_H
+#ifndef BIOMETRIC_DATA_H
+#define BIOMETRIC_DATA_H
 
 #include <Arduino.h>
-
-// Pomodoro states
-enum PomodoroState {
-  IDLE,
-  WORK_SESSION,
-  SHORT_BREAK,
-  LONG_BREAK
-};
 
 // Biometric data structure
 struct BiometricData {
@@ -21,7 +13,14 @@ struct BiometricData {
   unsigned long timestamp;
 };
 
-// Pomodoro info structure
+//////////////// POMODORO SESSION VARIABLES /////////////////
+enum PomodoroState {
+  IDLE,
+  WORK_SESSION,
+  SHORT_BREAK,
+  LONG_BREAK
+};
+
 struct PomodoroInfo {
   PomodoroState currentState;
   unsigned long timeRemaining;  // in seconds
@@ -32,13 +31,5 @@ struct PomodoroInfo {
   bool dataAvailable;
   unsigned long lastUpdate;
 };
-
-// Global instances
-extern BiometricData currentBio;
-extern PomodoroInfo pomodoroInfo;
-
-// Sensor functions
-void readBiometrics();
-String detectActivity();
 
 #endif

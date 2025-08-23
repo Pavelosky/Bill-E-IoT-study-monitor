@@ -1,35 +1,12 @@
 #include "display_manager.h"
-#include "config.h"
-#include "pomodoro.h"
-#include "sensors.h"
-#include <Wire.h>
+#include "data_structures.h"
+#include "pomodoro_timer.h"
+#include <LiquidCrystal_I2C.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-// Global LCD object
-LiquidCrystal_I2C lcd(0x27, 16, 2);
-
-extern bool sessionActive;
-extern String currentUser;
-extern unsigned long sessionStart;
+extern LiquidCrystal_I2C lcd;
 extern PubSubClient mqttClient;
-
-void initializeDisplay() {
-  // Initialize I2C for LCD
-  Wire.begin(SDA_PIN, SCL_PIN);
-  
-  // Initialize LCD
-  lcd.init();
-  lcd.backlight();
-}
-
-void showWelcomeScreen() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Bill-E Focus Bot");
-  lcd.setCursor(0, 1);
-  lcd.print("Scan RFID card");
-}
 
 void updateDisplay() {
   if (sessionActive) {
@@ -42,8 +19,8 @@ void updateDisplay() {
     static int displayMode = 0;
     
     // Switch between different data views every 3 seconds
-    if (millis() - lastDisplaySwitch > DISPLAY_SWITCH_INTERVAL) {
-      displayMode = (displayMode + 1) % DISPLAY_MODES; // 5 modes including MQTT status
+    if (millis() - lastDisplaySwitch > 3000) {
+      displayMode = (displayMode + 1) % 5; // Now 5 modes including MQTT status
       lastDisplaySwitch = millis();
     }
     
@@ -117,4 +94,13 @@ void updateDisplay() {
         break;
     }
   }
+}
+
+// Show welcome screen
+void showWelcomeScreen() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Bill-E Focus Bot");
+  lcd.setCursor(0, 1);
+  lcd.print("Scan RFID card");
 }

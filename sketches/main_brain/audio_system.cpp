@@ -1,5 +1,6 @@
-#include "sound_effects.h"
+#include "audio_system.h"
 #include "config.h"
+#include <Arduino.h>
 
 void playSessionStartSound() {
   // Cheerful ascending tone for successful login
@@ -55,12 +56,5 @@ void playSessionCompleteSound() {
     tone(BUZZER_PIN, melody[i], 300);
     delay(350);
   }
-  noTone(BUZZER_PIN);
-}
-
-void playSnoozeAcknowledgment() {
-  // Brief acknowledgment sound
-  tone(BUZZER_PIN, 440, 200);
-  delay(300);
   noTone(BUZZER_PIN);
 }
