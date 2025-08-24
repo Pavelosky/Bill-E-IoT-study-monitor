@@ -58,3 +58,29 @@ void playSessionCompleteSound() {
   }
   noTone(BUZZER_PIN);
 }
+
+void playReminderSound() {
+  // Gentle reminder tone
+  for (int i = 0; i < 3; i++) {
+    tone(BUZZER_PIN, 440, 300); // A4
+    delay(400);
+  }
+  noTone(BUZZER_PIN);
+}
+
+void playAlertSound() {
+  // Alert sound for critical issues
+  int melody[] = {440, 523, 587, 659}; // A4, C5, D5, E5
+  for (int i = 0; i < 4; i++) {
+    tone(BUZZER_PIN, melody[i], 300);
+    delay(350);
+  }
+  noTone(BUZZER_PIN);
+}
+
+void playTouchAcknoledgmentSound() {
+  // Short acknowledgment tone
+  tone(BUZZER_PIN, 523, 200); // C5
+  delay(250);
+  noTone(BUZZER_PIN);
+}

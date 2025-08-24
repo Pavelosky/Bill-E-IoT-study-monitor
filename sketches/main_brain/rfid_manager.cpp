@@ -49,8 +49,6 @@ void startSession(String userId) {
   currentUser = userId;
   sessionStart = millis();
   
-  digitalWrite(LED_PIN, HIGH);
-  
   // Play success sound
   playSessionStartSound();
   
@@ -67,8 +65,6 @@ void endSession() {
   sessionActive = false;
   String lastUser = currentUser;
   currentUser = "";
-  
-  digitalWrite(LED_PIN, LOW);
   
   // Play session complete sound
   playSessionCompleteSound();

@@ -156,6 +156,7 @@ void publishPomodoroState() {
   doc["snoozed"] = pomodoro.breakSnoozed;
   doc["snoozeCount"] = pomodoro.snoozeCount;
   doc["timestamp"] = millis();
+  doc["awaitingConfirmation"] = pomodoro.awaitingConfirmation;
   
   String stateText;
   switch (pomodoro.currentState) {

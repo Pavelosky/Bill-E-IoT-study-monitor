@@ -24,16 +24,27 @@ void initializePomodoro() {
 void updatePomodoroTimer() {
   if (!sessionActive || pomodoro.currentState == IDLE) return;
   
+  // Always check for touch input (force transition or confirmation)
+  handleTouchConfirmation();
+  
+  // If we're awaiting confirmation, don't check timer
+  if (pomodoro.awaitingConfirmation) {
+    return;
+  }
+  
   unsigned long elapsed = millis() - pomodoro.stateStartTime;
   
   // Check if current state duration is complete
   if (elapsed >= pomodoro.stateDuration) {
-    transitionToNextState();
+    // Instead of transitioning immediately, wait for confirmation
+    pomodoro.awaitingConfirmation = true;
+    Serial.println("Timer completed - awaiting touch confirmation");
+    publishPomodoroState(); // Update MQTT with awaiting status
   }
   
-  // Check break compliance during breaks
+  // Check break compliance during breaks (existing code)
   if ((pomodoro.currentState == SHORT_BREAK || pomodoro.currentState == LONG_BREAK) 
-      && !pomodoro.breakComplianceChecked && elapsed > 60000) { // Check after 1 minute
+      && !pomodoro.breakComplianceChecked && elapsed > 60000) {
     checkBreakCompliance();
   }
 }
@@ -74,6 +85,7 @@ void transitionToNextState() {
   pomodoro.snoozeCount = 0;
   pomodoro.breakComplianceChecked = false;
   
+  playTouchAcknoledgmentSound();
   publishPomodoroState();
 }
 
@@ -110,16 +122,31 @@ void checkBreakCompliance() {
 }
 
 String getTimeRemainingText() {
-  if (pomodoro.currentState == IDLE) return "00:00";
+  static String cachedTimeString = "00:00";
+  static unsigned long lastUpdate = 0;
   
-  unsigned long elapsed = millis() - pomodoro.stateStartTime;
-  unsigned long remaining = (pomodoro.stateDuration > elapsed) ? 
-                            (pomodoro.stateDuration - elapsed) / 1000 : 0;
+  // Only update every 500ms for optimization
+  if (millis() - lastUpdate < 500) {
+    return cachedTimeString;
+  }
   
-  int minutes = remaining / 60;
-  int seconds = remaining % 60;
+  if (pomodoro.currentState == IDLE) {
+    cachedTimeString = "00:00";
+  } else if (pomodoro.awaitingConfirmation) {
+    cachedTimeString = "TOUCH";
+  } else {
+    unsigned long elapsed = millis() - pomodoro.stateStartTime;
+    unsigned long remaining = (pomodoro.stateDuration > elapsed) ? 
+                              (pomodoro.stateDuration - elapsed) / 1000 : 0;
+    
+    int minutes = remaining / 60;
+    int seconds = remaining % 60;
+    
+    cachedTimeString = String(minutes) + ":" + (seconds < 10 ? "0" : "") + String(seconds);
+  }
   
-  return String(minutes) + ":" + (seconds < 10 ? "0" : "") + String(seconds);
+  lastUpdate = millis();
+  return cachedTimeString;
 }
 
 unsigned long getTimeRemainingSeconds() {
@@ -129,4 +156,42 @@ unsigned long getTimeRemainingSeconds() {
   unsigned long remaining = (pomodoro.stateDuration > elapsed) ? 
                             (pomodoro.stateDuration - elapsed) / 1000 : 0;
   return remaining;
+}
+
+bool readTouchSensor() {
+  static unsigned long lastTouchTime = 0;
+  static bool lastTouchState = false;
+  
+  int touchValue = analogRead(TOUCH_SENSOR);
+  bool currentTouchState = touchValue > 100; // Adjust threshold as needed
+  
+  // Simple debouncing - detect touch press (rising edge)
+  if (currentTouchState && !lastTouchState) {
+    if (millis() - lastTouchTime > 500) { // 500ms debounce to prevent accidental touches
+      lastTouchTime = millis();
+      lastTouchState = currentTouchState;
+      return true; // Return true on touch press
+    }
+  }
+  
+  lastTouchState = currentTouchState;
+  return false;
+}
+
+void handleTouchConfirmation() {
+  if (readTouchSensor()) {
+    if (pomodoro.awaitingConfirmation) {
+      Serial.println("Touch confirmed - transitioning state");
+      pomodoro.awaitingConfirmation = false;
+      transitionToNextState();
+    } else {
+      Serial.println("Touch detected - forcing state transition");
+      // Force immediate transition regardless of timer
+      transitionToNextState();
+    }
+  }
+}
+
+bool isAwaitingConfirmation() {
+  return pomodoro.awaitingConfirmation;
 }

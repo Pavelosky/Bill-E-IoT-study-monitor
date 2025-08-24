@@ -11,4 +11,8 @@ void checkBreakCompliance();
 String getTimeRemainingText();
 unsigned long getTimeRemainingSeconds();
 
+bool readTouchSensor();
+void handleTouchConfirmation();
+bool isAwaitingConfirmation();
+
 #endif

@@ -17,7 +17,7 @@
 // Pin definitions
 #define RST_PIN D1
 #define SS_PIN D2
-#define LED_PIN D0
+#define TOUCH_SENSOR D0
 #define BUZZER_PIN D8
 
 // MQTT Topics

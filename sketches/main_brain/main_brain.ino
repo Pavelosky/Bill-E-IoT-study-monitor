@@ -42,9 +42,8 @@ void setup() {
   Serial.println("Bill-E Main Brain with MQTT Starting...");
   
   // Initialize pins
-  pinMode(LED_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  pinMode(TOUCH_SENSOR, INPUT);
   
   // Initialize I2C for LCD
   Wire.begin(D3, D4);
@@ -103,6 +102,14 @@ void loop() {
     publishPomodoroState();
     lastPomodoroUpdate = millis();
   }
+
+  // Handle touch sensor for display switching
+  static bool lastTouchForDisplay = false;
+  bool currentTouch = digitalRead(TOUCH_SENSOR) == HIGH;
+  if (currentTouch && !lastTouchForDisplay) {
+    // Double-tap detection or separate touch logic for display
+  }
+  lastTouchForDisplay = currentTouch;
   
   delay(100);
 }

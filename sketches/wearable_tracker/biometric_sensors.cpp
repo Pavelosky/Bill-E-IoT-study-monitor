@@ -77,29 +77,38 @@ void readActivityData() {
   mpu.getAcceleration(&ax, &ay, &az);
   
   // Convert to g-force
-  float gx = ax / 16384.0;
-  float gy = ay / 16384.0;
-  float gz = az / 16384.0;
+  float accelX = ax / 16384.0;
+  float accelY = ay / 16384.0;
+  float accelZ = az / 16384.0;
   
   // Calculate acceleration magnitude
-  float magnitude = sqrt(gx*gx + gy*gy + gz*gz);
-  currentBio.acceleration = magnitude;
+  float accelMagnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
+  currentBio.acceleration = accelMagnitude;
   
-  // Detect movement and steps
-  float delta = abs(magnitude - lastAccelMagnitude);
+  unsigned long currentTime = millis();
   
-  if (delta > 0.3) { // Movement threshold
-    currentBio.lastMovement = millis();
-    
-    // Step detection
-    if (delta > 0.8 && millis() - lastStepTime > 300) {
+  // Improved step detection using absolute magnitude above gravity baseline
+  if (accelMagnitude > (1.0 + ACCEL_THRESHOLD)) {
+    if (!stepDetected && (currentTime - lastStepTime > STEP_DELAY)) {
       stepCount++;
-      lastStepTime = millis();
-      Serial.println("Step detected! Count: " + String(stepCount));
+      stepDetected = true;
+      lastStepTime = currentTime;
+      currentBio.lastMovement = currentTime;  // Update movement timestamp
+      
+      Serial.print("Step detected! Total steps: ");
+      Serial.println(stepCount);
     }
+  } else {
+    stepDetected = false;
   }
   
-  lastAccelMagnitude = magnitude;
+  // Update movement tracking for other activities (subtle movements)
+  float delta = abs(accelMagnitude - lastAccelMagnitude);
+  if (delta > 0.1) { // Lower threshold for general movement detection
+    currentBio.lastMovement = currentTime;
+  }
+  
+  lastAccelMagnitude = accelMagnitude;
 }
 
 String detectActivity() {

@@ -7,5 +7,8 @@ void playWorkSessionStartSound();
 void playBreakStartSound();
 void playLongBreakStartSound();
 void playSessionCompleteSound();
+void playReminderSound();
+void playAlertSound();
+void playTouchAcknoledgmentSound();
 
 #endif

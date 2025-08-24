@@ -1,6 +1,7 @@
 #include "data_analysis.h"
 #include "config.h"
 #include "data_structures.h"
+#include "audio_system.h"
 #include "mqtt_handler.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -36,12 +37,7 @@ void analyzeEnvironment() {
   
   if (needsAlert && sessionActive) {
     // Flash LED for alert
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(LED_PIN, LOW);
-      delay(100);
-      digitalWrite(LED_PIN, HIGH);
-      delay(100);
-    }
+    playAlertSound();
     
     Serial.println("Environment Alert: " + alertMsg);
   }
@@ -54,13 +50,8 @@ void analyzeBiometrics() {
   unsigned long timeSinceMovement = millis() - bioData.lastMovement;
   
   if (timeSinceMovement > 25 * 60 * 1000 && sessionActive) { // 25 minutes
-    // Flash LED for movement reminder
-    for (int i = 0; i < 5; i++) {
-      digitalWrite(LED_PIN, LOW);
-      delay(100);
-      digitalWrite(LED_PIN, HIGH);
-      delay(100);
-    }
+    // Play sound to remind the user of movement
+    playReminderSound();
     
     // Send MQTT movement reminder
     publishMovementReminder();

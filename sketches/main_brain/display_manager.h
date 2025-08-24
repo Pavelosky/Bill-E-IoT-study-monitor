@@ -3,5 +3,6 @@
 
 void updateDisplay();
 void showWelcomeScreen();
+void forceSwitchDisplay();
 
 #endif

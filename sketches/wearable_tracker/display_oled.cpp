@@ -34,9 +34,11 @@ void updateDisplay() {
         // Break compliance (only during breaks)
         if (pomodoroInfo.currentState == SHORT_BREAK || pomodoroInfo.currentState == LONG_BREAK) {
           showBreakCompliance();
+          drawProgressBar();
         } else {
           // Fall back to biometric data during work
           showBiometricData();
+          drawProgressBar();
         }
         break;
         
@@ -49,11 +51,6 @@ void updateDisplay() {
         // Step count and activity encouragement
         showActivityStatus();
         break;
-        
-      case 3:
-        // MQTT and connection status
-        showMQTTStatus();
-        break;
 
     }
   } else {
@@ -64,9 +61,6 @@ void updateDisplay() {
         break;
       case 1:
         showActivityStatus();
-        break;
-      case 2:
-        showMQTTStatus();
         break;
     }
   }
@@ -112,26 +106,6 @@ void showWelcomeScreen() {
   display.print("Wearable");
   display.setCursor(0, 60);
   display.print("MQTT Ready!");
-  display.sendBuffer();
-}
-
-// TODO: For debugging - MQTT status to be removed
-void showMQTTStatus() {
-  display.clearBuffer();
-  display.setFont(u8g2_font_6x10_tf);
-  
-  display.setCursor(0, 15);
-  display.print("MQTT Status");
-  display.setCursor(0, 30);
-  display.print("Broker: ");
-  display.print(client.connected() ? "OK" : "ERR");
-  display.setCursor(0, 45);
-  display.print("WiFi: ");
-  display.print(WiFi.status() == WL_CONNECTED ? "OK" : "ERR");
-  display.setCursor(0, 60);
-  display.print("IP: ");
-  display.print(WiFi.localIP().toString().substring(10)); // Show last part of IP
-  
   display.sendBuffer();
 }
 
@@ -210,11 +184,4 @@ void showBreakCompliance() {
   }
   
   display.sendBuffer();
-}
-
-void drawStar(int x, int y, int size) {
-  display.drawLine(x, y - size, x, y + size);
-  display.drawLine(x - size, y, x + size, y);
-  display.drawLine(x - size/2, y - size/2, x + size/2, y + size/2);
-  display.drawLine(x - size/2, y + size/2, x + size/2, y - size/2);
 }

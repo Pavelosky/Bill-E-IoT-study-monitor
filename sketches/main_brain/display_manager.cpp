@@ -20,55 +20,41 @@ void updateDisplay() {
     
     // Switch between different data views every 3 seconds
     if (millis() - lastDisplaySwitch > 3000) {
-      displayMode = (displayMode + 1) % 5; // Now 5 modes including MQTT status
+      displayMode = (displayMode + 1) % 2;
       lastDisplaySwitch = millis();
+      lcd.clear();
     }
-    
-    lcd.clear();
-    
+
     switch (displayMode) {
       case 0:
         // Pomodoro timer info
         lcd.setCursor(0, 0);
-        switch (pomodoro.currentState) {
-          case WORK_SESSION: lcd.print("WORK"); break;
-          case SHORT_BREAK: lcd.print("BREAK"); break;
-          case LONG_BREAK: lcd.print("LONG BREAK"); break;
-          default: lcd.print("IDLE"); break;
-        }
-        lcd.setCursor(0, 1);
-        lcd.print("Time: " + getTimeRemainingText());
-        if (pomodoro.breakSnoozed && pomodoro.snoozeCount > 0) {
-          lcd.setCursor(12, 1);
-          lcd.printf("S%d", pomodoro.snoozeCount);
-        }
-        break;
-        
-      case 1: {
-        // Session and cycle info
-        lcd.setCursor(0, 0);
-        lcd.printf("Cycles: %d", pomodoro.completedCycles);
-        lcd.setCursor(0, 1);
-        lcd.printf("Total: %dm", minutes);
-        break;
-      }
-        
-      case 2:
-        // Environmental data
-        if (envData.dataAvailable) {
-          lcd.setCursor(0, 0);
-          lcd.printf("T:%.1fC H:%.0f%%", envData.temperature, envData.humidity);
+        if (pomodoro.awaitingConfirmation) {
+          lcd.print("TOUCH TO CONTINUE");
           lcd.setCursor(0, 1);
-          lcd.printf("L:%d N:%d", envData.lightLevel, envData.noiseLevel);
+          lcd.print("Timer Complete!    "); // Extra spaces to clear previous text
         } else {
-          lcd.setCursor(0, 0);
-          lcd.print("Environment");
+          // Pre-calculate state text
+          const char* stateText;
+          switch (pomodoro.currentState) {
+            case WORK_SESSION: stateText = "WORK        "; break;  // Pad with spaces
+            case SHORT_BREAK: stateText = "BREAK       "; break;
+            case LONG_BREAK: stateText = "LONG BREAK  "; break;
+            default: stateText = "IDLE        "; break;
+          }
+          lcd.print(stateText);
+          
           lcd.setCursor(0, 1);
-          lcd.print("No Data");
+          lcd.print("Time: " + getTimeRemainingText());
+      
+          if (pomodoro.breakSnoozed && pomodoro.snoozeCount > 0) {
+            lcd.setCursor(14, 1);
+            lcd.printf("S%d", pomodoro.snoozeCount);
+          }
         }
         break;
         
-      case 3:
+      case 1:
         // Biometric data
         if (bioData.dataAvailable) {
           lcd.setCursor(0, 0);
@@ -82,16 +68,7 @@ void updateDisplay() {
           lcd.print("No Data");
         }
         break;
-        
-      case 4:
-        // MQTT and system status
-        lcd.setCursor(0, 0);
-        lcd.print("MQTT: ");
-        lcd.print(mqttClient.connected() ? "OK" : "ERR");
-        lcd.setCursor(0, 1);
-        lcd.print("WiFi: ");
-        lcd.print(WiFi.status() == WL_CONNECTED ? "OK" : "ERR");
-        break;
+
     }
   }
 }
@@ -103,4 +80,12 @@ void showWelcomeScreen() {
   lcd.print("Bill-E Focus Bot");
   lcd.setCursor(0, 1);
   lcd.print("Scan RFID card");
+}
+
+void forceSwitchDisplay() {
+  static int displayMode = 0;
+  displayMode = (displayMode + 1) % 5;
+  // Force immediate display update by resetting the timer
+  static unsigned long lastDisplaySwitch = 0;
+  lastDisplaySwitch = millis() - 2000; // Force next update cycle
 }

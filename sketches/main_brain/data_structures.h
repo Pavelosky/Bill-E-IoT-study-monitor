@@ -22,16 +22,17 @@ enum PomodoroState {
 
 struct PomodoroSession {
   PomodoroState currentState = IDLE;
-  unsigned long stateStartTime = 0;     // Start time of the current state
-  unsigned long stateDuration = 0;      // Current state duration in milliseconds
-  int completedCycles = 0;              // Number of completed pomodoro cycles
-  int workDuration = 25;                 // Default 25 minutes
-  int shortBreakDuration = 5;           // Default 5 minutes
-  int longBreakDuration = 15;            // Default 15 minutes
-  bool breakSnoozed = false;            // Snooze state for breaks
-  int snoozeCount = 0;                  // Number of times snoozed
-  unsigned long snoozeTime = 0;         // Time when snooze was activated
-  bool breakComplianceChecked = false;  // Compliance check for breaks
+  unsigned long stateStartTime = 0;     
+  unsigned long stateDuration = 0;      
+  int completedCycles = 0;              
+  int workDuration = 25;                
+  int shortBreakDuration = 5;           
+  int longBreakDuration = 15;           
+  bool breakSnoozed = false;            
+  int snoozeCount = 0;                  
+  unsigned long snoozeTime = 0;         
+  bool breakComplianceChecked = false;  
+  bool awaitingConfirmation = false;
 };
 
 // Environmental data from mesh

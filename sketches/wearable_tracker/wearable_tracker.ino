@@ -1,4 +1,4 @@
-// ESP8266-3 Wearable Tracker with Mesh Network
+// ESP8266-3 Wearable Tracker
 #include <U8g2lib.h>
 #include <Wire.h>
 #include <MPU6050.h>
@@ -24,10 +24,11 @@ PubSubClient client(espClient);
 BiometricData currentBio;
 PomodoroInfo pomodoroInfo;
 
-// Activity detection variables
+// Activity detection variables - defined here, declared as extern in biometric_sensors.h
 float lastAccelMagnitude = 0;
 int stepCount = 0;
 unsigned long lastStepTime = 0;
+bool stepDetected = false;
 
 // Session state
 bool sessionActive = false;
@@ -79,6 +80,8 @@ void setup() {
   Serial.println("Wearable Tracker with MQTT Ready!");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
+  Serial.println("Improved step counter algorithm enabled");
+  Serial.printf("Step detection: threshold=%.1f, delay=%dms\n", ACCEL_THRESHOLD, STEP_DELAY);
   delay(2000);
 }
 
