@@ -1,0 +1,61 @@
+# Fan Control Card
+- type: entities
+  title: "Bill-E Fan Control"
+  entities:
+    - entity: sensor.bill_e_fan_state
+      name: "Fan Status"
+    - entity: sensor.bill_e_fan_control_mode
+      name: "Control Mode"  
+    - entity: sensor.bill_e_fan_manual_override
+      name: "Manual Override"
+    - entity: switch.bill_e_fan_manual_on
+      name: "Manual Control"
+    - entity: button.bill_e_fan_auto_mode
+      name: "Return to Auto"
+    - entity: sensor.bill_e_temperature
+      name: "Current Temperature"
+
+# Or a more compact card
+- type: glance
+  title: "Environmental Control"
+  entities:
+    - entity: sensor.bill_e_temperature
+      name: "Temp"
+    - entity: sensor.bill_e_humidity  
+      name: "Humidity"
+    - entity: sensor.bill_e_fan_state
+      name: "Fan"
+    - entity: sensor.bill_e_fan_control_mode
+      name: "Mode"
+
+
+# # Advanced dashboard with custom cards
+# - type: conditional
+#   conditions:
+#     - entity: sensor.bill_e_session_active
+#       state: "true"
+#   card:
+#     type: entities
+#     title: "Session Environmental Control"
+#     entities:
+#       - sensor.bill_e_fan_state
+#       - switch.bill_e_fan_manual_on
+#       - button.bill_e_fan_auto_mode
+
+
+# # Optional: Automation to ensure fan turns off when session ends
+# automation:
+#   - alias: "Bill-E Fan Off When Session Ends"
+#     trigger:
+#       - platform: state
+#         entity_id: sensor.bill_e_session_active
+#         to: "false"
+#     condition:
+#       - condition: state
+#         entity_id: sensor.bill_e_fan_manual_override
+#         state: "true"
+#     action:
+#       - service: mqtt.publish
+#         data:
+#           topic: "bille/commands/fan"
+#           payload: '{"command": "auto"}'

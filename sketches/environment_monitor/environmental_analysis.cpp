@@ -1,5 +1,6 @@
 #include "environmental_analysis.h"
 #include "environment_data.h"
+#include "config.h"
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <Arduino.h>
@@ -55,4 +56,72 @@ void checkEnvironmentalAlerts() {
     
     Serial.println("Environmental alert: " + alertMessage);
   }
+
+  controlFan();
+}
+
+void controlFan() {
+  bool newFanState = fanState;
+  
+  // Check if manual override is active
+  if (manualOverride) {
+    newFanState = manualFanState;
+    Serial.println("Fan manual override active: " + String(newFanState ? "ON" : "OFF"));
+  } else {
+    // Automatic temperature-based control with hysteresis
+    if (currentEnv.temperature >= FAN_ON_TEMP && !fanState) {
+      newFanState = true;
+      Serial.printf("Auto fan ON: Temperature %.1f°C >= %.1f°C\n", currentEnv.temperature, FAN_ON_TEMP);
+    } else if (currentEnv.temperature <= FAN_OFF_TEMP && fanState) {
+      newFanState = false;
+      Serial.printf("Auto fan OFF: Temperature %.1f°C <= %.1f°C\n", currentEnv.temperature, FAN_OFF_TEMP);
+    }
+  }
+  
+  // Update fan state if changed
+  if (newFanState != fanState) {
+    fanState = newFanState;
+    digitalWrite(FAN_RELAY_PIN, fanState ? HIGH : LOW);
+    
+    Serial.println("Fan state changed to: " + String(fanState ? "ON" : "OFF"));
+    publishFanStatus();
+  }
+}
+
+void setFanManualOverride(bool enabled, bool state) {
+  manualOverride = enabled;
+  if (enabled) {
+    manualFanState = state;
+    Serial.println("Manual override enabled, fan set to: " + String(state ? "ON" : "OFF"));
+  } else {
+    Serial.println("Manual override disabled, returning to automatic control");
+  }
+  
+  // Immediately apply the control logic
+  controlFan();
+}
+
+void publishFanStatus() {
+  // Publish individual fan status
+  client.publish("bille/sensors/fan_state", fanState ? "ON" : "OFF");
+  client.publish("bille/sensors/fan_manual_override", manualOverride ? "true" : "false");
+  
+  // Publish detailed fan status
+  StaticJsonDocument<200> fanDoc;
+  fanDoc["nodeType"] = "ENVIRONMENT";
+  fanDoc["timestamp"] = millis();
+  fanDoc["fanState"] = fanState;
+  fanDoc["manualOverride"] = manualOverride;
+  fanDoc["temperature"] = currentEnv.temperature;
+  fanDoc["controlMode"] = manualOverride ? "manual" : "automatic";
+  
+  if (!manualOverride) {
+    fanDoc["autoReason"] = fanState ? "temperature_high" : "temperature_ok";
+  }
+  
+  String fanString;
+  serializeJson(fanDoc, fanString);
+  client.publish("bille/status/fan", fanString.c_str());
+  
+  Serial.println("Fan status published to MQTT");
 }

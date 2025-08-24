@@ -1,6 +1,7 @@
 #include "mqtt_client.h"
 #include "config.h"
 #include "environment_data.h"
+#include "environmental_analysis.h"
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -44,6 +45,7 @@ void reconnect_mqtt() {
       // Subscribe to control topics
       client.subscribe("bille/environment/request");
       client.subscribe("bille/session/state");
+      client.subscribe("bille/commands/fan");
       
       // Announce presence
       client.publish("bille/status/environment", "online", true);
@@ -79,6 +81,27 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     // Update local session state
     Serial.printf("Session update: %s for user %s\n", 
                   sessionActive ? "ACTIVE" : "INACTIVE", userId.c_str());
+  }
+  
+  // Handle fan control commands
+  else if (String(topic) == "bille/commands/fan") {
+    StaticJsonDocument<200> doc;
+    deserializeJson(doc, message);
+    
+    String command = doc["command"].as<String>();
+    
+    if (command == "manual_on") {
+      setFanManualOverride(true, true);
+      Serial.println("Fan manual override: ON");
+    } else if (command == "manual_off") {
+      setFanManualOverride(true, false);
+      Serial.println("Fan manual override: OFF");
+    } else if (command == "auto") {
+      setFanManualOverride(false, false);
+      Serial.println("Fan set to automatic mode");
+    } else if (command == "status") {
+      publishFanStatus();
+    }
   }
 }
 

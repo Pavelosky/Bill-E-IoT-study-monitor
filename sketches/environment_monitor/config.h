@@ -14,5 +14,11 @@
 #define DHT_TYPE        DHT11
 #define ANALOG_PIN      A0
 #define SOUND_DIGITAL   D5
+#define FAN_RELAY_PIN   D7
+
+// Fan control thresholds
+#define FAN_ON_TEMP     24.0    // Turn fan ON when temp >= 24°C
+#define FAN_OFF_TEMP    22.0    // Turn fan OFF when temp <= 22°C (hysteresis)
+
 
 #endif

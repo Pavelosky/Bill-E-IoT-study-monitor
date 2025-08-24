@@ -1,0 +1,112 @@
+# Bill-E Focus Robot MQTT Sensors
+
+sensor:
+# Environmental Sensors
+  - name: "Bill-E Temperature"
+    state_topic: "bille/sensors/temperature"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    
+  - name: "Bill-E Humidity"
+    state_topic: "bille/sensors/humidity"
+    unit_of_measurement: "%"
+    device_class: humidity
+    
+  - name: "Bill-E Light Level"
+    state_topic: "bille/sensors/light"
+    unit_of_measurement: "lx"
+    device_class: illuminance
+    
+  - name: "Bill-E Noise Level"
+    state_topic: "bille/sensors/noise"
+
+# Biometric and Health Sensors
+  - name: "Bill-E Heart Rate"
+    state_topic: "bille/sensors/heartrate"
+    unit_of_measurement: "BPM"
+    
+  - name: "Bill-E Step Count"
+    state_topic: "bille/sensors/steps"
+    
+  - name: "Bill-E Activity"
+    state_topic: "bille/sensors/activity"
+
+  - name: "Bill-E Acceleration"
+    state_topic: "bille/data/biometric"
+    value_template: "{{ value_json.acceleration }}"
+    unit_of_measurement: "g"
+    
+  - name: "Bill-E Last Movement"
+    state_topic: "bille/data/biometric"
+    value_template: "{{ (now().timestamp() - (value_json.lastMovement / 1000)) | round(0) }}"
+    unit_of_measurement: "seconds ago"
+    
+  - name: "Bill-E Health Alert"
+    state_topic: "bille/alerts/health"
+    value_template: "{{ value_json.alert }}"
+
+# Pomodoro and System Status Sensors
+  - name: "Bill-E Current State"
+    state_topic: "bille/pomodoro/current_state"
+    
+  - name: "Bill-E System Status"
+    state_topic: "bille/status/system"
+    value_template: "{{ 'Online' if value_json.mqttConnected else 'Offline' }}"
+    
+  - name: "Bill-E Session Duration"
+    state_topic: "bille/status/system"
+    value_template: "{{ value_json.sessionDuration if value_json.sessionActive else 0 }}"
+    unit_of_measurement: "seconds"
+    
+  - name: "Bill-E Pomodoro Cycles"
+    state_topic: "bille/pomodoro/cycles"
+    
+  - name: "Bill-E Time Remaining"
+    state_topic: "bille/pomodoro/time_remaining"
+    unit_of_measurement: "seconds"
+
+# Fan Control Sensors
+  - name: "Bill-E Fan State"
+    state_topic: "bille/sensors/fan_state"
+    icon: mdi:fan
+    
+  - name: "Bill-E Fan Manual Override"
+    state_topic: "bille/sensors/fan_manual_override"
+    icon: mdi:fan-auto
+    
+  - name: "Bill-E Fan Control Mode"
+    state_topic: "bille/status/fan"
+    value_template: "{{ value_json.controlMode }}"
+    icon: mdi:cog
+    
+  - name: "Bill-E Fan Auto Reason"
+    state_topic: "bille/status/fan"
+    value_template: "{{ value_json.autoReason | default('N/A') }}"
+    icon: mdi:thermometer
+
+binary_sensor:
+  - name: "Bill-E Session Active"
+    state_topic: "bille/session/active"
+    payload_on: "true"
+    payload_off: "false"
+
+switch:
+    - name: "Bill-E Fan Manual ON"
+      command_topic: "bille/commands/fan"
+      payload_on: '{"command": "manual_on"}'
+      payload_off: '{"command": "manual_off"}'
+      state_topic: "bille/sensors/fan_state"
+      state_on: "ON"
+      state_off: "OFF"
+      icon: mdi:fan
+      
+button:
+  - name: "Bill-E Fan Auto Mode"
+    command_topic: "bille/commands/fan"
+    payload_press: '{"command": "auto"}'
+    icon: mdi:fan-auto
+    
+  - name: "Bill-E Fan Status Request"
+    command_topic: "bille/commands/fan" 
+    payload_press: '{"command": "status"}'
+    icon: mdi:information

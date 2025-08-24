@@ -26,6 +26,11 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 // Environmental data instance
 EnvironmentData currentEnv;
 
+// Fan control state variables - defined here, declared as extern in environmental_analysis.h
+bool fanState = false;           // Current fan state (ON/OFF)
+bool manualOverride = false;     // Manual override enabled
+bool manualFanState = false;     // Manual fan state when override is active
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -33,6 +38,8 @@ void setup() {
   
   // Initialize pins
   pinMode(SOUND_DIGITAL, INPUT);
+  pinMode(FAN_RELAY_PIN, OUTPUT);
+  digitalWrite(FAN_RELAY_PIN, LOW);  // Start with fan OFF
   
   // Initialize DHT sensor
   dht.begin();
@@ -53,11 +60,13 @@ void setup() {
   lcd.setCursor(0, 0);
   lcd.print("Env Monitor");
   lcd.setCursor(0, 1);
-  lcd.print("MQTT Ready");
+  lcd.print("MQTT + Fan Ready");
   
-  Serial.println("Environment Monitor with MQTT Ready!");
+  Serial.println("Environment Monitor with MQTT and Fan Control Ready!");
   Serial.print("IP Address: ");
   Serial.println(WiFi.localIP());
+  Serial.println("Fan relay pin: D7");
+  Serial.printf("Auto fan thresholds: ON >= %.1f°C, OFF <= %.1f°C\n", FAN_ON_TEMP, FAN_OFF_TEMP);
 }
 
 void loop() {
@@ -71,7 +80,7 @@ void loop() {
   if (millis() - lastRead > 10000) {
     readEnvironment();
     publishEnvironmentalData();
-    checkEnvironmentalAlerts();
+    checkEnvironmentalAlerts();  // This now includes fan control
     lastRead = millis();
   }
   
