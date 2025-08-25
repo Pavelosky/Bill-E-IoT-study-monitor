@@ -8,19 +8,46 @@
 extern LiquidCrystal_I2C lcd;
 extern PubSubClient mqttClient;
 
+// Motivational phrases for different cycle counts
+const String motivationalPhrases[] = {
+  "Let's Focus!",           // 0 cycles
+  "Great Start!",           // 1 cycle
+  "Keep Going!",            // 2 cycles
+  "You're on Fire!",        // 3 cycles
+  "Well Done!",             // 4 cycles
+  "Fantastic!",             // 5 cycles
+  "Unstoppable!",           // 6 cycles
+  "Amazing Work!",          // 7 cycles
+  "You're a Pro!",          // 8+ cycles
+};
+
+const int maxPhrases = 9;
+
+// Environmental alert thresholds
+const int NOISE_THRESHOLD = 4;
+const int LIGHT_THRESHOLD = 270;
+
+
 void updateDisplay() {
+  static bool lastSessionState = false;
+  
+  // Check if session state changed
+  if (sessionActive != lastSessionState) {
+    lcd.clear();
+    lastSessionState = sessionActive;
+  }
+  
   if (sessionActive) {
-    // Show session info with environmental and biometric data
-    unsigned long elapsed = (millis() - sessionStart) / 1000;
-    int minutes = elapsed / 60;
-    int seconds = elapsed % 60;
-    
     static unsigned long lastDisplaySwitch = 0;
     static int displayMode = 0;
     
-    // Switch between different data views every 3 seconds
-    if (millis() - lastDisplaySwitch > 3000) {
-      displayMode = (displayMode + 1) % 2;
+    // Check if we have environmental alerts
+    bool alertActive = hasEnvironmentalAlert();
+    int maxModes = alertActive ? 3 : 2;
+    
+    // Switch between different data views every 4 seconds
+    if (millis() - lastDisplaySwitch > 4000) {
+      displayMode = (displayMode + 1) % maxModes;
       lastDisplaySwitch = millis();
       lcd.clear();
     }
@@ -32,15 +59,14 @@ void updateDisplay() {
         if (pomodoro.awaitingConfirmation) {
           lcd.print("TOUCH TO CONTINUE");
           lcd.setCursor(0, 1);
-          lcd.print("Timer Complete!    "); // Extra spaces to clear previous text
+          lcd.print("Timer Complete!");
         } else {
-          // Pre-calculate state text
           const char* stateText;
           switch (pomodoro.currentState) {
-            case WORK_SESSION: stateText = "WORK        "; break;  // Pad with spaces
-            case SHORT_BREAK: stateText = "BREAK       "; break;
-            case LONG_BREAK: stateText = "LONG BREAK  "; break;
-            default: stateText = "IDLE        "; break;
+            case WORK_SESSION: stateText = "WORK"; break;
+            case SHORT_BREAK: stateText = "BREAK"; break;
+            case LONG_BREAK: stateText = "LONG BREAK"; break;
+            default: stateText = "IDLE"; break;
           }
           lcd.print(stateText);
           
@@ -54,38 +80,77 @@ void updateDisplay() {
         }
         break;
         
-      case 1:
-        // Biometric data
-        if (bioData.dataAvailable) {
-          lcd.setCursor(0, 0);
-          lcd.printf("HR:%d Steps:%d", bioData.heartRate, bioData.stepCount);
-          lcd.setCursor(0, 1);
-          lcd.print("Act: " + bioData.activity.substring(0, 10));
-        } else {
-          lcd.setCursor(0, 0);
-          lcd.print("Biometric");
-          lcd.setCursor(0, 1);
-          lcd.print("No Data");
+      case 1: { 
+        // Pomodoro cycles and motivation
+        lcd.setCursor(0, 0);
+        lcd.printf("Cycles: %d", pomodoro.completedCycles);
+        lcd.setCursor(0, 1);
+        String phrase = getMotivationalPhrase(pomodoro.completedCycles);
+        lcd.print(phrase);
+        
+        // Add visual indicator for current state
+        if (phrase.length() < 14) {
+          lcd.setCursor(15, 1);
+          switch (pomodoro.currentState) {
+            case WORK_SESSION: lcd.print("W"); break;
+            case SHORT_BREAK: lcd.print("B"); break;
+            case LONG_BREAK: lcd.print("L"); break;
+            default: lcd.print("?"); break;
+          }
         }
         break;
-
+      }  
+        
+      case 2:
+        // Environmental alerts (only shows if there's an alert)
+        if (alertActive) {
+          showEnvironmentalAlert();
+        } else {
+          // Fallback to mode 0
+          displayMode = 0;
+        }
+        break;
     }
+  } else {
+    // Show welcome screen when no session is active
+    showWelcomeScreen();
   }
 }
 
-// Show welcome screen
 void showWelcomeScreen() {
-  lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Bill-E Focus Bot");
   lcd.setCursor(0, 1);
   lcd.print("Scan RFID card");
 }
 
-void forceSwitchDisplay() {
-  static int displayMode = 0;
-  displayMode = (displayMode + 1) % 5;
-  // Force immediate display update by resetting the timer
-  static unsigned long lastDisplaySwitch = 0;
-  lastDisplaySwitch = millis() - 2000; // Force next update cycle
+String getMotivationalPhrase(int cycles) {
+  if (cycles >= maxPhrases) {
+    return motivationalPhrases[maxPhrases - 1]; // Use last phrase for 8+ cycles
+  }
+  return motivationalPhrases[cycles];
+}
+
+bool hasEnvironmentalAlert() {
+  if (!envData.dataAvailable) {
+    return false;
+  }
+  
+  return (envData.noiseLevel > NOISE_THRESHOLD || envData.lightLevel < LIGHT_THRESHOLD);
+}
+
+void showEnvironmentalAlert() {
+  if (envData.noiseLevel > NOISE_THRESHOLD) {
+    // Noise alert
+    lcd.setCursor(0, 0);
+    lcd.print("Very noisy");
+    lcd.setCursor(0, 1);
+    lcd.print("Use ear plugs");
+  } else if (envData.lightLevel < LIGHT_THRESHOLD) {
+    // Light alert  
+    lcd.setCursor(0, 0);
+    lcd.print("Too dark");
+    lcd.setCursor(0, 1);
+    lcd.print("Turn on the lamp");
+  }
 }

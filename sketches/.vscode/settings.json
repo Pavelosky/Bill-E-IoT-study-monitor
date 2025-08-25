@@ -1,11 +1,4 @@
 {
-  "files.associations": {
-    "*.dbclient-js": "javascript",
-    "*.ejs": "html",
-    "initializer_list": "cpp",
-    "vector": "cpp",
-    "xutility": "cpp"
-  },
   "C_Cpp_Runner.cCompilerPath": "gcc",
   "C_Cpp_Runner.cppCompilerPath": "g++",
   "C_Cpp_Runner.debuggerPath": "gdb",
