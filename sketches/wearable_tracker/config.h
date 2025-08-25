@@ -12,7 +12,6 @@
 // Pin definitions
 #define OLED_SDA        D2
 #define OLED_SCL        D1
-#define HEART_SENSOR    A0
-#define HEART_LED       D5
+#define BUTTON_PIN      D3
 
 #endif

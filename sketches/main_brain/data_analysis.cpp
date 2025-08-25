@@ -35,12 +35,6 @@ void analyzeEnvironment() {
     needsAlert = true;
   }
   
-  if (needsAlert && sessionActive) {
-    // Flash LED for alert
-    playAlertSound();
-    
-    Serial.println("Environment Alert: " + alertMsg);
-  }
 }
 
 void analyzeBiometrics() {

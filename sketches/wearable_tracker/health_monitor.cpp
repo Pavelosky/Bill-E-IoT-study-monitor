@@ -29,13 +29,6 @@ void publishHealthAlerts() {
     hasAlert = true;
   }
   
-  // Check heart rate during work
-  if (pomodoroInfo.currentState == WORK_SESSION && currentBio.heartRate > 100) {
-    alertMessage = "Heart rate elevated - consider relaxing";
-    alertLevel = "warning";
-    hasAlert = true;
-  }
-  
   // Check break compliance
   if ((pomodoroInfo.currentState == SHORT_BREAK || pomodoroInfo.currentState == LONG_BREAK) 
       && timeSinceMovement > 2 * 60 * 1000) { // 2 minutes into break
@@ -47,7 +40,6 @@ void publishHealthAlerts() {
   if (hasAlert) {
     alertDoc["alert"] = alertMessage;
     alertDoc["level"] = alertLevel;
-    alertDoc["heartRate"] = currentBio.heartRate;
     alertDoc["timeSinceMovement"] = timeSinceMovement / 1000; // seconds
     alertDoc["pomodoroState"] = pomodoroInfo.currentState;
     

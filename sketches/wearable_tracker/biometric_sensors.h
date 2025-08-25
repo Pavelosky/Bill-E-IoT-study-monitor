@@ -4,7 +4,6 @@
 #include "biometric_data.h"
 
 void readBiometrics();
-int readHeartRate();
 void readActivityData();
 String detectActivity();
 

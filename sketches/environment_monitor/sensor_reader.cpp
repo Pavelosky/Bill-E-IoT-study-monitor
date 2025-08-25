@@ -32,8 +32,13 @@ void readEnvironment() {
 
 int readKY018Light() {
   int rawValue = analogRead(ANALOG_PIN);
-  int lux = map(rawValue, 0, 1024, 0, 1000);
-  return lux;
+
+// Here I measured the response of the sensor and the checked with the phone for the values and made a curve fit
+  float a = 1.8125e8;   // coefficient
+  float b = -2.7918;    // exponent
+
+  float lux = a * pow(rawValue, b);
+  return (int)lux;
 }
 
 int readKY038Noise() {

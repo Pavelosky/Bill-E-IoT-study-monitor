@@ -139,13 +139,6 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     
     Serial.println("Movement reminder: " + reminderMsg);
     
-    // Brief flash of heart rate LED
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(HEART_LED, HIGH);
-      delay(100);
-      digitalWrite(HEART_LED, LOW);
-      delay(100);
-    }
   }
   
   // Handle data requests
@@ -160,7 +153,6 @@ void publishBiometricData() {
   }
   
   // Publish individual sensor values to HA
-  client.publish("bille/sensors/heartrate", String(currentBio.heartRate).c_str());
   client.publish("bille/sensors/steps", String(currentBio.stepCount).c_str());
   client.publish("bille/sensors/activity", currentBio.activity.c_str());
   
@@ -168,7 +160,6 @@ void publishBiometricData() {
   StaticJsonDocument<400> doc;
   doc["nodeType"] = "WEARABLE";
   doc["timestamp"] = currentBio.timestamp;
-  doc["heartRate"] = currentBio.heartRate;
   doc["activity"] = currentBio.activity;
   doc["stepCount"] = currentBio.stepCount;
   doc["acceleration"] = currentBio.acceleration;

@@ -27,9 +27,9 @@ LiquidCrystal_I2C lcd(0x27, 16, 2);
 EnvironmentData currentEnv;
 
 // Fan control state variables - defined here, declared as extern in environmental_analysis.h
-bool fanState = false;           // Current fan state (ON/OFF)
-bool manualOverride = false;     // Manual override enabled
-bool manualFanState = false;     // Manual fan state when override is active
+bool fanState = false;           
+bool manualOverride = false;     
+bool manualFanState = false;     
 
 void setup() {
   Serial.begin(115200);

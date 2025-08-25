@@ -36,19 +36,9 @@ void displayEnvironment() {
         lcd.setCursor(0, 1);
         lcd.printf("Noise: %d", currentEnv.noiseLevel);
         break;
-
-      // TODO: For DEBUG, needs to be removed  
-      case 2:
-        lcd.setCursor(0, 0);
-        lcd.print("MQTT: ");
-        lcd.print(client.connected() ? "OK" : "ERR");
-        lcd.setCursor(0, 1);
-        lcd.print("WiFi: ");
-        lcd.print(WiFi.status() == WL_CONNECTED ? "OK" : "ERR");
-        break;
     }
     
-    displayMode = (displayMode + 1) % 3;
+    displayMode = (displayMode + 1) % 2;
     lastDisplay = millis();
   }
 }

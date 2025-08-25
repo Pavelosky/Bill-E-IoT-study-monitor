@@ -37,11 +37,7 @@ String currentUser = "";
 void setup() {
   Serial.begin(115200);
   delay(1000);
- Serial.println("Bill-E Wearable Tracker with MQTT Starting...");
-  
-  // Initialize pins
-  pinMode(HEART_LED, OUTPUT);
-  digitalWrite(HEART_LED, LOW);
+  Serial.println("Bill-E Wearable Tracker with MQTT Starting...");
   
   // Initialize I2C
   Wire.begin(OLED_SDA, OLED_SCL);
@@ -53,6 +49,9 @@ void setup() {
   // Initialize MPU6050
   Serial.println("Initializing MPU6050...");
   mpu.initialize();
+
+  // Initialize the button pin
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   
   // Test gyro connection
   if (mpu.testConnection()) {
@@ -87,26 +86,26 @@ void setup() {
 
 void loop() {
   
-  if (!client.connected()) {
-    reconnect_mqtt();
-  }
-  client.loop();
-  
-  // Read sensors every 5 seconds
-  static unsigned long lastRead = 0;
-  if (millis() - lastRead > 5000) {
-    readBiometrics();
-    publishBiometricData();
-    lastRead = millis();
-  }
-  
-  // Check for health alerts every 30 seconds
-  static unsigned long lastHealthCheck = 0;
-  if (millis() - lastHealthCheck > 30000) {
-    publishHealthAlerts();
-    lastHealthCheck = millis();
-  }
-  
+ if (!client.connected()) {
+   reconnect_mqtt();
+ }
+ client.loop();
+ 
+ // Read sensors every 5 seconds
+ static unsigned long lastRead = 0;
+ if (millis() - lastRead > 5000) {
+   readBiometrics();
+   publishBiometricData();
+   lastRead = millis();
+ }
+ 
+ // Check for health alerts every 30 seconds
+ static unsigned long lastHealthCheck = 0;
+ if (millis() - lastHealthCheck > 30000) {
+   publishHealthAlerts();
+   lastHealthCheck = millis();
+ }
+ 
   // Update display
   updateDisplay();
 }

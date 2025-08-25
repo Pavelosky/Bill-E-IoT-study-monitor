@@ -9,8 +9,11 @@ void showWelcomeScreen();
 void showMQTTStatus();
 void showActivityStatus();
 void showBreakCompliance();
-void drawProgressBar();
+void showPomodoroProgress();
 void drawStar(int x, int y, int size);
+void handleButtonPress();
+bool readButton();
+void nextDisplayMode();
 
 extern bool sessionActive;
 

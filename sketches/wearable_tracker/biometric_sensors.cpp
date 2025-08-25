@@ -6,8 +6,6 @@
 extern MPU6050 mpu;
 
 void readBiometrics() {
-  // Read heart rate from KY-036
-  currentBio.heartRate = readHeartRate();
   
   // Read accelerometer for activity detection
   readActivityData();
@@ -22,54 +20,6 @@ void readBiometrics() {
   currentBio.timestamp = millis();
 }
 
-int readHeartRate() {
-  static unsigned long lastBeat = 0;
-  static int beatCount = 0;
-  static unsigned long measureStart = 0;
-  static int lastValidBPM = 75;
-  
-  // Read sensor value
-  int sensorValue = analogRead(HEART_SENSOR);
-  
-  // Simple peak detection for heartbeat
-  static int lastValue = 0;
-  static bool beatDetected = false;
-  
-  if (sensorValue > 600 && lastValue < 600 && !beatDetected) {
-    unsigned long now = millis();
-    
-    if (now - lastBeat > 300) { // Minimum 300ms between beats
-      beatDetected = true;
-      lastBeat = now;
-      beatCount++;
-      
-      // Blink LED on heartbeat
-      digitalWrite(HEART_LED, HIGH);
-      
-      // Calculate BPM over 15-second windows
-      if (measureStart == 0) measureStart = now;
-      
-      if (now - measureStart >= 15000) { // 15 seconds
-        int bpm = (beatCount * 60) / 15;
-        beatCount = 0;
-        measureStart = now;
-        
-        if (bpm >= 40 && bpm <= 200) {
-          lastValidBPM = bpm;
-          return bpm;
-        }
-      }
-    }
-  }
-  
-  if (sensorValue < 500) {
-    beatDetected = false;
-    digitalWrite(HEART_LED, LOW);
-  }
-  
-  lastValue = sensorValue;
-  return lastValidBPM;
-}
 
 void readActivityData() {
   // Read raw accelerometer data
@@ -87,24 +37,59 @@ void readActivityData() {
   
   unsigned long currentTime = millis();
   
-  // Improved step detection using absolute magnitude above gravity baseline
-  if (accelMagnitude > (1.0 + ACCEL_THRESHOLD)) {
-    if (!stepDetected && (currentTime - lastStepTime > STEP_DELAY)) {
-      stepCount++;
-      stepDetected = true;
-      lastStepTime = currentTime;
-      currentBio.lastMovement = currentTime;  // Update movement timestamp
-      
-      Serial.print("Step detected! Total steps: ");
-      Serial.println(stepCount);
+  // Improved step detection algorithm
+  static float accelBuffer[10] = {0}; // Rolling buffer for smoothing
+  static int bufferIndex = 0;
+  static float smoothedAccel = 1.0;
+  static bool stepInProgress = false;
+  static float peakValue = 0;
+  
+  // Update rolling buffer
+  accelBuffer[bufferIndex] = accelMagnitude;
+  bufferIndex = (bufferIndex + 1) % 10;
+  
+  // Calculate smoothed acceleration
+  float sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += accelBuffer[i];
+  }
+  smoothedAccel = sum / 10.0;
+  
+  // Step detection with peak detection and validation
+  float threshold = 1.15; // Adjusted threshold
+  float variance = accelMagnitude - smoothedAccel;
+  
+  if (!stepInProgress && variance > threshold && (currentTime - lastStepTime > 300)) {
+    stepInProgress = true;
+    peakValue = variance;
+  } 
+  else if (stepInProgress) {
+    if (variance > peakValue) {
+      peakValue = variance; // Track peak
+    } 
+    else if (variance < (threshold * 0.3) && peakValue > threshold) {
+      // Step completed - validate it's a real step
+      if (currentTime - lastStepTime > 300 && currentTime - lastStepTime < 2000) {
+        stepCount++;
+        stepInProgress = false;
+        lastStepTime = currentTime;
+        currentBio.lastMovement = currentTime;
+        Serial.print("Step detected! Total steps: ");
+        Serial.println(stepCount);
+      } else {
+        stepInProgress = false; // Invalid step timing
+      }
     }
-  } else {
-    stepDetected = false;
   }
   
-  // Update movement tracking for other activities (subtle movements)
+  // Reset step detection if too long since peak
+  if (stepInProgress && (currentTime - lastStepTime > 2000)) {
+    stepInProgress = false;
+  }
+  
+  // Update movement tracking for other activities
   float delta = abs(accelMagnitude - lastAccelMagnitude);
-  if (delta > 0.1) { // Lower threshold for general movement detection
+  if (delta > 0.05) {
     currentBio.lastMovement = currentTime;
   }
   

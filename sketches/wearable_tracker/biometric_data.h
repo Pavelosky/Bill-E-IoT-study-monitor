@@ -5,7 +5,6 @@
 
 // Biometric data structure
 struct BiometricData {
-  int heartRate;
   String activity;
   int stepCount;
   unsigned long lastMovement;
