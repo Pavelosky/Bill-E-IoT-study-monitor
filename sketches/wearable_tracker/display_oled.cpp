@@ -143,11 +143,6 @@ void showBreakCompliance() {
     display.setCursor(0, 50);
     display.print("Stand & Stretch");
     
-    // Alert icon
-    display.drawTriangle(100, 15, 108, 35, 92, 35);
-    display.setFont(u8g2_font_6x10_tf);
-    display.setCursor(98, 30);
-    display.print("!");
   }
   
   display.sendBuffer();
