@@ -14,7 +14,7 @@ void analyzeEnvironment() {
   bool needsAlert = false;
   String alertMsg = "";
   
-  // Check temperature (optimal: 20-24°C)
+  // Check temperature (optimal: 20-26°C)
   if (envData.temperature < 20) {
     alertMsg = "Too Cold!";
     needsAlert = true;
@@ -44,8 +44,6 @@ void analyzeBiometrics() {
   unsigned long timeSinceMovement = millis() - bioData.lastMovement;
   
   if (timeSinceMovement > 25 * 60 * 1000 && sessionActive) { // 25 minutes
-    // Play sound to remind the user of movement
-    playReminderSound();
     
     // Send MQTT movement reminder
     publishMovementReminder();

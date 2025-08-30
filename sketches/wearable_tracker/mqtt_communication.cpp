@@ -155,6 +155,10 @@ void publishBiometricData() {
   // Publish individual sensor values to HA
   client.publish("bille/sensors/steps", String(currentBio.stepCount).c_str());
   client.publish("bille/sensors/activity", currentBio.activity.c_str());
+
+  unsigned long minutesSinceMovement = (millis() - currentBio.lastMovement) / 60000 ;
+  client.publish("bille/sensors/last_movement_minutes", String(minutesSinceMovement).c_str());
+  
   
   // Publish combined biometric data
   StaticJsonDocument<400> doc;
@@ -179,4 +183,5 @@ void publishBiometricData() {
   client.publish("bille/data/biometric", jsonString.c_str());
   
   Serial.println("Biometric data published to MQTT");
+  Serial.printf("Last movement: %lu m ago\n", millis() - currentBio.lastMovement);
 }

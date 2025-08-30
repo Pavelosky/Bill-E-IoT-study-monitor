@@ -30,14 +30,14 @@ void checkEnvironmentalAlerts() {
   }
   
   // Noise alerts
-  if (currentEnv.noiseLevel > 60) {
+  if (currentEnv.noiseLevel > 4) {
     alertMessage = "Environment too noisy for concentration";
     alertLevel = "warning";
     hasAlert = true;
   }
   
   // Light alerts
-  if (currentEnv.lightLevel < 100) {
+  if (currentEnv.lightLevel < 270) {
     alertMessage = "Lighting may be too dim for productivity";
     alertLevel = "info";
     hasAlert = true;

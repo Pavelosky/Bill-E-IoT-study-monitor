@@ -18,7 +18,7 @@
 
 // Fan control thresholds
 #define FAN_ON_TEMP     24.0    // Turn fan ON when temp >= 24°C
-#define FAN_OFF_TEMP    22.0    // Turn fan OFF when temp <= 22°C (hysteresis)
+#define FAN_OFF_TEMP    22.0    // Turn fan OFF when temp <= 22°C 
 
 
 #endif

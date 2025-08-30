@@ -7,6 +7,7 @@
 extern LiquidCrystal_I2C lcd;
 extern EnvironmentData currentEnv;
 
+// Display environmental data on LCD
 void displayEnvironment() {
   static unsigned long lastDisplay = 0;
   static int displayMode = 0;

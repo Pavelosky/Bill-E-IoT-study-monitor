@@ -6,6 +6,7 @@
 void readBiometrics();
 void readActivityData();
 String detectActivity();
+void detectSteps();
 
 extern BiometricData currentBio;
 extern float lastAccelMagnitude;

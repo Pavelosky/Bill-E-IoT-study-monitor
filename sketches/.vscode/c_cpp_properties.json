@@ -5,13 +5,35 @@
       "includePath": [
         "${workspaceFolder}/**"
       ],
-      "compilerPath": "C:/msys64/ucrt64/bin/gcc.exe",
-      "cStandard": "${default}",
+      "browse": {
+        "limitSymbolsToIncludedHeaders": true,
+        "path": [
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/src",
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/.pio/libdeps/test/ArduinoFake/src",
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/.pio/libdeps/test/ArduinoJson/src",
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/.pio/libdeps/test/Unity/src",
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/main_brain",
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/environment_monitor",
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/wearable_tracker",
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/test",
+          "C:/Users/pawel/OneDrive/Documenten/BSc CS UoL/level 6/IOT/final/sketches/test/mocks",
+          ""
+        ]
+      },
+      "defines": [
+        "PLATFORMIO=60118",
+        "UNIT_TEST",
+        "ARDUINO=200",
+        "ESP32",
+        ""
+      ],
       "cppStandard": "${default}",
-      "intelliSenseMode": "windows-gcc-x64",
+      "compilerPath": "C:/msys64/ucrt64/bin/gcc.exe",
       "compilerArgs": [
         ""
-      ]
+      ],
+      "cStandard": "${default}",
+      "intelliSenseMode": "windows-gcc-x64"
     }
   ],
   "version": 4

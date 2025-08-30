@@ -1,4 +1,62 @@
-// ESP8266-1 Main Brain with Mesh Network
+/*
+===============================================================
+ESP8266-1 Main Brain - Bill-E Focus Robot
+IoT Productivity System - University of London BSc Computer Science
+Module: CM3040 Physical Computing and Internet-of-Things (IoT)
+===============================================================
+
+DEVICE OVERVIEW:
+- Central coordination node with RFID authentication
+- LCD display for user interface and system status
+- Pomodoro timer management with audio feedback
+- MQTT broker for inter-device communication
+- Touch sensor for manual timer control
+
+PIN CONNECTIONS:
+- RST_PIN:      D1  (RFID Reset)
+- SS_PIN:       D2  (RFID SPI Select)
+- TOUCH_SENSOR: D0  (Capacitive touch input)
+- BUZZER_PIN:   D8  (Audio feedback)
+- SDA (I2C):    D3  (LCD communication)
+- SCL (I2C):    D4  (LCD communication)
+- SPI MOSI:     D7  (RFID communication)
+- SPI MISO:     D6  (RFID communication)
+- SPI SCK:      D5  (RFID communication)
+
+HARDWARE COMPONENTS:
+- ESP8266 NodeMCU v1.0
+- MFRC522 RFID Reader
+- 16x2 I2C LCD Display (0x27)
+- Passive Buzzer
+- Touch Sensor Module
+
+MQTT TOPICS (Published):
+- bille/session/state       - Session status and user info
+- bille/pomodoro/state      - Timer state and progress
+- bille/status/system       - System health monitoring
+- bille/alerts/movement     - Movement reminders
+
+MQTT TOPICS (Subscribed):
+- bille/data/environment    - Environmental sensor data
+- bille/data/biometric      - Wearable tracker data
+- bille/commands/session    - Remote session control
+- bille/commands/pomodoro   - Remote timer control
+
+DEPENDENCIES:
+- MFRC522 Library
+- LiquidCrystal_I2C Library
+- ArduinoJson Library
+- ESP8266WiFi Library
+- PubSubClient Library
+
+NETWORK CONFIGURATION:
+- WiFi SSID: TechLabNet
+- MQTT Broker: 192.168.1.107:1883
+- Authentication: bille_mqtt user
+===============================================================
+*/
+
+// ESP8266-1 Main Brain
 #include <MFRC522.h>
 #include <LiquidCrystal_I2C.h>
 #include <SPI.h>
@@ -7,7 +65,7 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-// Include our modules
+// Include modules
 #include "config.h"
 #include "data_structures.h"
 #include "rfid_manager.h"

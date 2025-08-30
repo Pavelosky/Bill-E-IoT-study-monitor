@@ -40,7 +40,7 @@ void publishHealthAlerts() {
   if (hasAlert) {
     alertDoc["alert"] = alertMessage;
     alertDoc["level"] = alertLevel;
-    alertDoc["timeSinceMovement"] = timeSinceMovement / 1000; // seconds
+    alertDoc["timeSinceMovement"] = timeSinceMovement / 60000; // minutes
     alertDoc["pomodoroState"] = pomodoroInfo.currentState;
     
     String alertString;

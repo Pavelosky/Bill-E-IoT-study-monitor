@@ -1,3 +1,80 @@
+/*
+===============================================================
+ESP8266-3 Wearable Tracker - Bill-E Focus Robot
+IoT Productivity System - University of London BSc Computer Science
+Module: CM3040 Physical Computing and Internet-of-Things (IoT)
+===============================================================
+
+DEVICE OVERVIEW:
+- Personal activity and biometric monitoring device
+- Step counting with improved accelerometer algorithms
+- Activity detection (sitting, walking, running, moving)
+- OLED display with multiple information screens
+- Health alerts for movement reminders and break compliance
+
+PIN CONNECTIONS:
+- OLED_SDA:    D2  (I2C SDA for 128x64 OLED display)
+- OLED_SCL:    D1  (I2C SCL for 128x64 OLED display)
+- BUTTON_PIN:  D3  (Push button for display mode switching)
+- MPU6050_SDA: D2  (I2C SDA for accelerometer, shared with OLED)
+- MPU6050_SCL: D1  (I2C SCL for accelerometer, shared with OLED)
+
+HARDWARE COMPONENTS:
+- ESP8266 NodeMCU v1.0
+- MPU6050 6-axis Accelerometer/Gyroscope
+- 0.96" I2C OLED Display (128x64, SSD1306)
+- Push Button for UI navigation
+
+BIOMETRIC FEATURES:
+- Step Detection: Threshold-based algorithm with smoothing
+- Activity Classification: Sitting, Still, Moving, Walking, Running
+- Movement Tracking: Last movement timestamp for health alerts
+- Acceleration Monitoring: Real-time g-force measurement
+
+DISPLAY MODES:
+- Mode 0: Biometric overview (steps, activity, session context)
+- Mode 1: Detailed activity status (acceleration, movement time)
+- Mode 2: Pomodoro progress (timer, cycles, percentage complete)
+- Mode 3: Break compliance (movement encouragement during breaks)
+
+HEALTH MONITORING:
+- Work Session Alerts: Movement reminders after 20+ minutes sitting
+- Break Compliance: Encourages movement during Pomodoro breaks
+- Activity Thresholds: Configurable detection parameters
+
+MQTT TOPICS (Published):
+- bille/data/biometric          - Complete biometric data package
+- bille/sensors/steps           - Individual step count
+- bille/sensors/activity        - Current activity classification
+- bille/sensors/last_movement_minutes - Time since last movement
+- bille/alerts/health           - Health and movement alerts
+
+MQTT TOPICS (Subscribed):
+- bille/session/state           - Session start/stop notifications
+- bille/pomodoro/state          - Timer updates and context
+- bille/wearable/request        - Data requests from main brain
+- bille/alerts/movement         - Movement reminders from system
+
+STEP DETECTION ALGORITHM:
+- Smoothing: Exponential moving average (α = 0.2)
+- Threshold: 0.05g step-up, -0.02g step-down detection
+- Debounce: 300ms minimum interval between steps
+- Validation: Acceleration magnitude analysis
+
+DEPENDENCIES:
+- U8g2lib Library (OLED display)
+- MPU6050 Library (accelerometer)
+- ArduinoJson Library
+- ESP8266WiFi Library
+- PubSubClient Library
+
+NETWORK CONFIGURATION:
+- WiFi SSID: TechLabNet
+- MQTT Broker: 192.168.1.107:1883
+- Authentication: bille_mqtt user
+===============================================================
+*/
+
 // ESP8266-3 Wearable Tracker
 #include <U8g2lib.h>
 #include <Wire.h>
@@ -39,6 +116,9 @@ void setup() {
   delay(1000);
   Serial.println("Bill-E Wearable Tracker with MQTT Starting...");
   
+  // Initialize biometric data
+  currentBio.lastMovement = millis();
+
   // Initialize I2C
   Wire.begin(OLED_SDA, OLED_SCL);
   
