@@ -83,7 +83,7 @@ NETWORK CONFIGURATION:
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-// Include our modules
+// Include modules
 #include "config.h"
 #include "biometric_data.h"
 #include "biometric_sensors.h"

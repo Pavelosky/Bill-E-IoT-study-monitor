@@ -114,8 +114,6 @@ void checkBreakCompliance() {
     Serial.println("Break compliance: User is moving - good!");
   } else {
     Serial.println("Break compliance: Consider moving around!");
-    // Send gentle reminder to mesh
-    // Note: Original code had mesh network functionality here
   }
   
   pomodoro.breakComplianceChecked = true;
@@ -163,7 +161,7 @@ bool readTouchSensor() {
   static bool lastTouchState = false;
   
   int touchValue = analogRead(TOUCH_SENSOR);
-  bool currentTouchState = touchValue > 100; // Adjust threshold as needed
+  bool currentTouchState = touchValue > 100; // Adjust threshold here for sesitivity
   
   // Simple debouncing - detect touch press (rising edge)
   if (currentTouchState && !lastTouchState) {

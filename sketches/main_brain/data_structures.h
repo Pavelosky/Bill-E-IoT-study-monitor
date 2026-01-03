@@ -35,7 +35,7 @@ struct PomodoroSession {
   bool awaitingConfirmation = false;
 };
 
-// Environmental data from mesh
+// Environmental data 
 struct EnvironmentData {
   float temperature = 0;
   float humidity = 0;

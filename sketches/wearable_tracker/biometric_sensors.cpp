@@ -11,7 +11,10 @@ void readBiometrics() {
   readActivityData();
   
   // Detect steps 
-  detectSteps();
+  // detectSteps();
+
+  //  Since step detection was unreliable, we estimate steps based on activity 
+  estimateStepCount();
   
   // Detect current activity
   currentBio.activity = detectActivity();
@@ -70,32 +73,41 @@ String detectActivity() {
   }
 }
 
-
-void detectSteps() {
-  unsigned long currentTime = millis();
-  static float smoothedAccel = 1.0;
-  static bool aboveThreshold = false;
+// // Couldn't get this to detect steps correctly, the approach is changed to just add average steps
+// // count based on the activity (walking / running)
+// void detectSteps() {
+//   unsigned long currentTime = millis();
+//   static float smoothedAccel = 1.0;
+//   static bool aboveThreshold = false;
   
-  // Simple moving average for smoothing
-  float alpha = 0.2;
-  smoothedAccel = alpha * smoothedAccel + (1 - alpha) * currentBio.acceleration;
+//   // Simple moving average for smoothing
+//   float alpha = 0.1; // Lower alpha for smoother averaging
+//   smoothedAccel = alpha * smoothedAccel + (1 - alpha) * currentBio.acceleration;
   
-  // Very simple step detection
-  float diff = currentBio.acceleration - smoothedAccel;
+//   // Improved step detection
+//   float diff = currentBio.acceleration - smoothedAccel;
   
-  // Step up detected
-  if (!aboveThreshold && diff > 0.05 && (currentTime - lastStepTime > 300)) {
-    aboveThreshold = true;
-  }
-  // Step down detected - count the step
-  else if (aboveThreshold && diff < -0.02) {
-    stepCount++;
-    lastStepTime = currentTime;
-    currentBio.lastMovement = currentTime;
-    aboveThreshold = false;
+//   // Step up detected
+//   if (!aboveThreshold && diff > 0.03 && (currentTime - lastStepTime > 200)) { // Lower threshold and time gap
+//     aboveThreshold = true;
+//   }
+//   // Step down detected - count the step
+//   else if (aboveThreshold && diff < -0.015) { // Lower threshold for step down
+//     stepCount++;
+//     lastStepTime = currentTime;
+//     currentBio.lastMovement = currentTime;
+//     aboveThreshold = false;
     
-    Serial.printf("STEP #%d! Diff: %.3f, Accel: %.3f, Smooth: %.3f\n", 
-                  stepCount, diff, currentBio.acceleration, smoothedAccel);
-  }
+//     Serial.printf("STEP #%d! Diff: %.3f, Accel: %.3f, Smooth: %.3f\n", 
+//                   stepCount, diff, currentBio.acceleration, smoothedAccel);
+//   }
   
+// }
+
+void estimateStepCount(){
+  if (currentBio.activity == "Walking") {
+    stepCount += 2; // Average walking pace
+  } else if (currentBio.activity == "Running") {
+    stepCount += 3; // Average running pace
+  }
 }
